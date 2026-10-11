@@ -52,4 +52,18 @@ func TestPostgresStore(t *testing.T) {
 	if _, err := s.Get(ctx, hash[:]); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("after Delete, Get err = %v, want ErrNotFound", err)
 	}
+
+	expired := sha256.Sum256([]byte(rand.Text()))
+	err = s.Create(ctx, Session{IDHash: expired[:], UserID: userID, ExpiresAt: time.Now().Add(-time.Minute)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n, err := s.DeleteExpired(ctx); err != nil || n < 1 {
+		t.Fatalf("DeleteExpired = %d, %v, want at least 1", n, err)
+	}
+	var left int
+	db.QueryRow(ctx, `SELECT count(*) FROM sessions WHERE id_hash = $1`, expired[:]).Scan(&left)
+	if left != 0 {
+		t.Fatal("expired session still in the table after DeleteExpired")
+	}
 }

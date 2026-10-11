@@ -37,6 +37,7 @@ func TestLoadRequiresDatabaseURL(t *testing.T) {
 }
 
 func TestLoadGoogleDomains(t *testing.T) {
+	clearEnv(t)
 	t.Setenv("DATABASE_URL", "postgres://localhost/test")
 	t.Setenv("GOOGLE_CLIENT_ID", "id")
 	t.Setenv("GOOGLE_CLIENT_SECRET", "secret")

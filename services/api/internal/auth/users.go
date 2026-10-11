@@ -2,9 +2,9 @@ package auth
 
 import (
 	"context"
+	"crypto/rand"
 	"errors"
 	"fmt"
-	"strconv"
 	"strings"
 
 	"github.com/jackc/pgx/v5"
@@ -87,10 +87,11 @@ func (u *Users) login(ctx context.Context, p profile) (int64, error) {
 
 func createUser(ctx context.Context, tx pgx.Tx, p profile) (int64, error) {
 	base := handleFrom(p.Login)
-	for i := 1; i <= 50; i++ {
+	for i := range 10 {
 		handle := base
-		if i > 1 {
-			suffix := "-" + strconv.Itoa(i)
+		if i > 0 {
+			// 8 random base32 chars (40 bits), so a taken name can't block signup
+			suffix := "-" + strings.ToLower(rand.Text()[:8])
 			handle = base[:min(len(base), 32-len(suffix))] + suffix
 		}
 		var id int64

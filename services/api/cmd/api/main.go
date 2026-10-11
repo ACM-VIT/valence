@@ -57,7 +57,9 @@ func run() error {
 	mux := http.NewServeMux()
 	server.Health(mux, pool.Ping)
 
-	sessions := auth.NewSessions(session.NewPostgresStore(pool), cfg)
+	store := session.NewPostgresStore(pool)
+	go pruneSessions(ctx, store, time.Hour)
+	sessions := auth.NewSessions(store, cfg)
 	mux.HandleFunc("GET /auth/me", sessions.Me)
 	mux.HandleFunc("POST /auth/logout", sessions.Logout)
 
@@ -82,6 +84,27 @@ func run() error {
 		"google_login", cfg.GoogleEnabled(),
 	)
 	return server.Run(ctx, *addr, mux, 15*time.Second)
+}
+
+// pruneSessions deletes expired sessions every interval until ctx is cancelled.
+func pruneSessions(ctx context.Context, store *session.PostgresStore, every time.Duration) {
+	t := time.NewTicker(every)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			n, err := store.DeleteExpired(ctx)
+			if err != nil {
+				slog.Warn("pruning expired sessions failed", "err", err)
+				continue
+			}
+			if n > 0 {
+				slog.Info("pruned expired sessions", "count", n)
+			}
+		}
+	}
 }
 
 func envOr(key, fallback string) string {

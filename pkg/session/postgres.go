@@ -62,3 +62,9 @@ func (s *PostgresStore) DeleteForUser(ctx context.Context, userID int64) error {
 	_, err := s.db.Exec(ctx, `DELETE FROM sessions WHERE user_id = $1`, userID)
 	return err
 }
+
+// DeleteExpired removes sessions past their expiry and reports how many it removed.
+func (s *PostgresStore) DeleteExpired(ctx context.Context) (int64, error) {
+	tag, err := s.db.Exec(ctx, `DELETE FROM sessions WHERE expires_at <= now()`)
+	return tag.RowsAffected(), err
+}
