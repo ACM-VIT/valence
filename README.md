@@ -1,6 +1,6 @@
 # Valence
 
-Valence is ACMVIT's in-house competitive programming platform. It runs contests and practice with sandboxed judging, a browser-based editor, live leaderboards and optional proctoring. Nearly every feature is configurable at the global, contest, problem and language level.
+Valence is ACM-VIT's in-house competitive programming platform. It runs contests and practice with sandboxed judging, a browser-based editor, live leaderboards and optional proctoring. Nearly every feature is configurable at the global, contest, problem and language level.
 
 
 ## Getting started
@@ -15,7 +15,7 @@ Valence is ACMVIT's in-house competitive programming platform. It runs contests 
 ### 1. Clone and install
 
 ```bash
-git clone https://github.com/AdityaVKochar/valence.git
+git clone https://github.com/ACM-VIT/valence.git
 cd valence
 pnpm install
 go mod download

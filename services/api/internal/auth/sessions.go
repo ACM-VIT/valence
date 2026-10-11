@@ -11,8 +11,8 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/AdityaVKochar/valence/pkg/config"
-	"github.com/AdityaVKochar/valence/pkg/session"
+	"github.com/ACM-VIT/valence/pkg/config"
+	"github.com/ACM-VIT/valence/pkg/session"
 )
 
 const (

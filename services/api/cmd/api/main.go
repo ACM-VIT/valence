@@ -13,11 +13,11 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/AdityaVKochar/valence/pkg/config"
-	"github.com/AdityaVKochar/valence/pkg/server"
-	"github.com/AdityaVKochar/valence/pkg/session"
-	"github.com/AdityaVKochar/valence/pkg/version"
-	"github.com/AdityaVKochar/valence/services/api/internal/auth"
+	"github.com/ACM-VIT/valence/pkg/config"
+	"github.com/ACM-VIT/valence/pkg/server"
+	"github.com/ACM-VIT/valence/pkg/session"
+	"github.com/ACM-VIT/valence/pkg/version"
+	"github.com/ACM-VIT/valence/services/api/internal/auth"
 )
 
 func main() {

@@ -14,7 +14,7 @@ import (
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/github"
 
-	"github.com/AdityaVKochar/valence/pkg/config"
+	"github.com/ACM-VIT/valence/pkg/config"
 )
 
 const (

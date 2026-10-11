@@ -1,4 +1,4 @@
-module github.com/AdityaVKochar/valence
+module github.com/ACM-VIT/valence
 
 go 1.26.0
 
