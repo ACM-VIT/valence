@@ -61,16 +61,25 @@ func run() error {
 	mux.HandleFunc("GET /auth/me", sessions.Me)
 	mux.HandleFunc("POST /auth/logout", sessions.Logout)
 
+	users := auth.NewUsers(pool)
+	
 	if cfg.GitHubEnabled() {
-		gh := auth.NewGithub(cfg, auth.NewUsers(pool), sessions)
+		gh := auth.NewGithub(cfg, users, sessions)
 		mux.HandleFunc("GET /auth/github/login", gh.Login)
 		mux.HandleFunc("GET /auth/github/callback", gh.Callback)
+	}
+
+	if cfg.GoogleEnabled() {
+		gg := auth.NewGoogle(cfg, users, sessions)
+		mux.HandleFunc("GET /auth/google/login", gg.Login)
+		mux.HandleFunc("GET /auth/google/callback", gg.Callback)
 	}
 
 	slog.Info("API starting",
 		"version", version.String(),
 		"env", cfg.Env,
 		"github_login", cfg.GitHubEnabled(),
+		"google_login", cfg.GoogleEnabled(),
 	)
 	return server.Run(ctx, *addr, mux, 15*time.Second)
 }

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"strconv"
 	"time"
 
 	"golang.org/x/oauth2"
@@ -108,9 +109,15 @@ func (g *Github) Callback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	userID, err := g.users.GithubLogin(ctx, gu)
+	userID, err := g.users.Login(ctx, profile{
+		Provider:  "github",
+		Subject:   strconv.FormatInt(gu.ID, 10),
+		Login:     gu.Login,
+		Name:      gu.Name,
+		AvatarURL: gu.AvatarURL,
+	})
 	if err != nil {
-		slog.Error("saving Github user failed", "err", err)
+		slog.Error("saving GitHub user failed", "err", err)
 		http.Error(w, "Could not sign you in. Please try again.", http.StatusInternalServerError)
 		return
 	}
