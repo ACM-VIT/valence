@@ -2,6 +2,7 @@ package session
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
 	"errors"
 	"os"
@@ -33,7 +34,7 @@ func TestPostgresStore(t *testing.T) {
 	t.Cleanup(func() { db.Exec(ctx, `DELETE FROM users WHERE id = $1`, userID) })
 
 	s := NewPostgresStore(db)
-	hash := sha256.Sum256([]byte("test-session-id"))
+	hash := sha256.Sum256([]byte(rand.Text()))
 
 	err = s.Create(ctx, Session{IDHash: hash[:], UserID: userID, ExpiresAt: time.Now().Add(time.Hour), IP: "127.0.0.1"})
 	if err != nil {

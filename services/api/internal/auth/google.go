@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"crypto/subtle"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -116,6 +117,10 @@ func (g *Google) Callback(w http.ResponseWriter, r *http.Request) {
 		Email:     gu.Email,
 		AvatarURL: gu.Picture,
 	})
+	if errors.Is(err, ErrDisabled) {
+		http.Error(w, "This Valence account has been disabled.", http.StatusForbidden)
+		return
+	}
 	if err != nil {
 		slog.Error("saving Google user failed", "err", err)
 		http.Error(w, "Could not sign you in. Please try again.", http.StatusInternalServerError)

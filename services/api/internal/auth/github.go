@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"crypto/subtle"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -116,6 +117,10 @@ func (g *Github) Callback(w http.ResponseWriter, r *http.Request) {
 		Name:      gu.Name,
 		AvatarURL: gu.AvatarURL,
 	})
+	if errors.Is(err, ErrDisabled) {
+		http.Error(w, "This Valence account has been disabled.", http.StatusForbidden)
+		return
+	}
 	if err != nil {
 		slog.Error("saving GitHub user failed", "err", err)
 		http.Error(w, "Could not sign you in. Please try again.", http.StatusInternalServerError)

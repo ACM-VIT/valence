@@ -7,7 +7,7 @@ Valence is ACM-VIT's in-house competitive programming platform. It runs contests
 
 ### Prerequisites
 
-- [Go](https://go.dev/dl/) 1.25 or newer
+- [Go](https://go.dev/dl/) 1.26 or newer
 - [Node.js](https://nodejs.org/) 22 or newer and [pnpm](https://pnpm.io/installation) 10
 - [Docker](https://docs.docker.com/get-docker/), for Postgres
 - [goose](https://github.com/pressly/goose), for database migrations: `go install github.com/pressly/goose/v3/cmd/goose@latest`

@@ -55,14 +55,14 @@ func run() error {
 	}
 
 	mux := http.NewServeMux()
-	server.Health(mux, nil)
+	server.Health(mux, pool.Ping)
 
 	sessions := auth.NewSessions(session.NewPostgresStore(pool), cfg)
 	mux.HandleFunc("GET /auth/me", sessions.Me)
 	mux.HandleFunc("POST /auth/logout", sessions.Logout)
 
 	users := auth.NewUsers(pool)
-	
+
 	if cfg.GitHubEnabled() {
 		gh := auth.NewGithub(cfg, users, sessions)
 		mux.HandleFunc("GET /auth/github/login", gh.Login)

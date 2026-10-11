@@ -63,6 +63,9 @@ func (c Config) validate() error {
 }
 
 func (c *Config) normalize() {
+	c.PublicAPIURL = strings.TrimRight(c.PublicAPIURL, "/")
+	c.WebOrigin = strings.TrimRight(c.WebOrigin, "/")
+
 	var domains []string
 	for _, d := range c.GoogleAllowedDomains {
 		d = strings.ToLower(strings.TrimSpace(d))

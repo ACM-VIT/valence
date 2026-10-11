@@ -30,9 +30,12 @@ func (s *PostgresStore) Create(ctx context.Context, sess Session) error {
 func (s *PostgresStore) Get(ctx context.Context, idHash []byte) (Session, error) {
 	sess := Session{IDHash: idHash}
 	err := s.db.QueryRow(ctx,
-		`SELECT user_id, created_at, expires_at, user_agent, coalesce(host(ip), '')
-		 FROM sessions
-		 WHERE id_hash = $1 AND expires_at > now()`, idHash).
+		`SELECT s.user_id, s.created_at, s.expires_at, s.user_agent, coalesce(host(s.ip), '')
+		FROM sessions s
+	   	JOIN users u ON u.id = s.user_id
+		WHERE s.id_hash = $1
+	    AND s.expires_at > now()
+	    AND u.disabled_at IS NULL`, idHash).
 		Scan(&sess.UserID, &sess.CreatedAt, &sess.ExpiresAt, &sess.UserAgent, &sess.IP)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Session{}, ErrNotFound
