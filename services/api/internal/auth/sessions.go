@@ -4,7 +4,6 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
-	"errors"
 	"fmt"
 	"log/slog"
 	"net"
@@ -75,18 +74,12 @@ func (s *Sessions) Current(w http.ResponseWriter, r *http.Request) (session.Sess
 }
 
 func (s *Sessions) Me(w http.ResponseWriter, r *http.Request) {
-	sess, err := s.Current(w, r)
-	if errors.Is(err, session.ErrNotFound) {
-		http.Error(w, "Not logged in.", http.StatusUnauthorized)
-		return
-	}
+	u, err := RequireUser(r.Context())
 	if err != nil {
-		slog.Error("loading session failed", "err", err)
-		http.Error(w, "Something went wrong.", http.StatusInternalServerError)
+		writeAuthError(w, err)
 		return
 	}
-	fmt.Fprintf(w, "You are Valence user #%d. Session expires %s.\n",
-		sess.UserID, sess.ExpiresAt.Format(time.RFC1123))
+	fmt.Fprintf(w, "You are %s (@%s), Valence user #%d, role %s.\n", u.DisplayName, u.Handle, u.ID, u.Role)
 }
 
 func (s *Sessions) Logout(w http.ResponseWriter, r *http.Request) {

@@ -132,3 +132,13 @@ func displayName(p profile) string {
 	}
 	return string(name[:min(len(name), 64)])
 }
+
+func (u *Users) ByID(ctx context.Context, id int64) (User, error) {
+	var usr User
+	err := u.db.QueryRow(ctx,
+		`SELECT id, handle, display_name, role::text
+		   FROM users
+		  WHERE id = $1 AND disabled_at IS NULL`, id).
+		Scan(&usr.ID, &usr.Handle, &usr.DisplayName, &usr.Role)
+	return usr, err
+}

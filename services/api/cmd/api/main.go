@@ -83,7 +83,7 @@ func run() error {
 		"github_login", cfg.GitHubEnabled(),
 		"google_login", cfg.GoogleEnabled(),
 	)
-	return server.Run(ctx, *addr, mux, 15*time.Second)
+	return server.Run(ctx, *addr, auth.WithUser(sessions, users, mux), 15*time.Second)
 }
 
 // pruneSessions deletes expired sessions every interval until ctx is cancelled.
