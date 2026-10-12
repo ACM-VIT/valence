@@ -22,7 +22,6 @@ func RegisterDev(mux *http.ServeMux, cfg config.Config, users *Users, sessions *
 	mux.HandleFunc("GET /auth/dev", d.login)
 }
 
-
 func (d *dev) login(w http.ResponseWriter, r *http.Request) {
 	name := r.URL.Query().Get("user")
 	role := r.URL.Query().Get("role")
@@ -60,4 +59,3 @@ func (d *dev) login(w http.ResponseWriter, r *http.Request) {
 	}
 	http.Redirect(w, r, "/auth/me", http.StatusSeeOther)
 }
-

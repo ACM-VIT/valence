@@ -15,8 +15,8 @@ func TestDevLoginOnlyWhenEnabled(t *testing.T) {
 		want     bool
 	}{
 		{"dev", true, true},
-		{"dev", false, false},  // forgot DEV_LOGIN
-		{"prod", true, false},  // DEV_LOGIN leaked into prod
+		{"dev", false, false}, // forgot DEV_LOGIN
+		{"prod", true, false}, // DEV_LOGIN leaked into prod
 		{"prod", false, false},
 	}
 	for _, c := range cases {
