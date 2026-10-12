@@ -1,0 +1,8 @@
+# yaml-language-server: $schema=../../../docs/problem.schema.json
+version: 0
+slug: aplusb
+title: "A + B"
+time_limit_ms: 1000
+memory_limit_mb: 256
+checker: tokens
+samples: [1, 2]
