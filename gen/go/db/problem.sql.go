@@ -9,6 +9,35 @@ import (
 	"context"
 )
 
+const createProblem = `-- name: CreateProblem :one
+INSERT INTO problems (slug, title, statement_md, time_limit_ms, memory_limit_kib, checker)
+VALUES ($1, $2, $3, $4, $5, $6)
+RETURNING id
+`
+
+type CreateProblemParams struct {
+	Slug           string
+	Title          string
+	StatementMd    string
+	TimeLimitMs    int32
+	MemoryLimitKib int32
+	Checker        string
+}
+
+func (q *Queries) CreateProblem(ctx context.Context, arg CreateProblemParams) (int64, error) {
+	row := q.db.QueryRow(ctx, createProblem,
+		arg.Slug,
+		arg.Title,
+		arg.StatementMd,
+		arg.TimeLimitMs,
+		arg.MemoryLimitKib,
+		arg.Checker,
+	)
+	var id int64
+	err := row.Scan(&id)
+	return id, err
+}
+
 const deleteTests = `-- name: DeleteTests :exec
 DELETE FROM tests
 WHERE problem_id =  $1
@@ -167,4 +196,35 @@ func (q *Queries) ListTests(ctx context.Context, problemID int64) ([]Test, error
 		return nil, err
 	}
 	return items, nil
+}
+
+const updateProblem = `-- name: UpdateProblem :one
+UPDATE problems
+SET title = $2, statement_md = $3, time_limit_ms = $4, memory_limit_kib = $5, checker = $6,
+    revision = revision + 1
+WHERE id = $1
+RETURNING revision
+`
+
+type UpdateProblemParams struct {
+	ID             int64
+	Title          string
+	StatementMd    string
+	TimeLimitMs    int32
+	MemoryLimitKib int32
+	Checker        string
+}
+
+func (q *Queries) UpdateProblem(ctx context.Context, arg UpdateProblemParams) (int32, error) {
+	row := q.db.QueryRow(ctx, updateProblem,
+		arg.ID,
+		arg.Title,
+		arg.StatementMd,
+		arg.TimeLimitMs,
+		arg.MemoryLimitKib,
+		arg.Checker,
+	)
+	var revision int32
+	err := row.Scan(&revision)
+	return revision, err
 }
