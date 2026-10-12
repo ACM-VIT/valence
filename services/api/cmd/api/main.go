@@ -64,6 +64,7 @@ func run() error {
 	mux.HandleFunc("POST /auth/logout", sessions.Logout)
 
 	users := auth.NewUsers(pool)
+	auth.RegisterDev(mux, cfg, users, sessions)
 
 	if cfg.GitHubEnabled() {
 		gh := auth.NewGithub(cfg, users, sessions)

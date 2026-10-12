@@ -142,3 +142,9 @@ func (u *Users) ByID(ctx context.Context, id int64) (User, error) {
 		Scan(&usr.ID, &usr.Handle, &usr.DisplayName, &usr.Role)
 	return usr, err
 }
+
+func (u *Users) SetRole(ctx context.Context, id int64, role string) error {
+	_, err := u.db.Exec(ctx,
+		`UPDATE users SET role = $2::user_role WHERE id = $1`, id, role)
+	return err
+}

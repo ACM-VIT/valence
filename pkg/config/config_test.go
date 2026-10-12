@@ -81,7 +81,7 @@ func TestTrailingSlashTrimmed(t *testing.T) {
 func clearEnv(t *testing.T) {
 	t.Helper()
 	for _, k := range []string{
-		"VALENCE_ENV", "DATABASE_URL", "PUBLIC_API_URL", "WEB_ORIGIN",
+		"VALENCE_ENV", "DEV_LOGIN", "DATABASE_URL", "PUBLIC_API_URL", "WEB_ORIGIN",
 		"GITHUB_CLIENT_ID", "GITHUB_CLIENT_SECRET",
 		"GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET", "GOOGLE_ALLOWED_DOMAINS",
 	} {
