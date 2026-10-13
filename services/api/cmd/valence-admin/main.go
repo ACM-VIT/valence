@@ -46,6 +46,7 @@ func run(ctx context.Context, args []string) error {
 func loadAll(dirs []string) ([]*problems.Package, error) {
 	var pkgs []*problems.Package
 	bad := 0
+	seen := map[string]string{} // slug → first directory that used it
 	for _, dir := range dirs {
 		p, err := problems.Load(dir)
 		if err != nil {
@@ -53,6 +54,13 @@ func loadAll(dirs []string) ([]*problems.Package, error) {
 			fmt.Printf("%s: invalid\n  %s\n", dir, strings.ReplaceAll(err.Error(), "\n", "\n  "))
 			continue
 		}
+		// Otherwise the second package would silently overwrite the first.
+		if first, ok := seen[p.Slug]; ok {
+			bad++
+			fmt.Printf("%s: invalid\n  slug %q is also used by %s\n", dir, p.Slug, first)
+			continue
+		}
+		seen[p.Slug] = dir
 		fmt.Printf("%s: ok\n", dir)
 		pkgs = append(pkgs, p)
 	}

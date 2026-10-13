@@ -55,12 +55,17 @@ func (s *Store) Upsert(ctx context.Context, p db.CreateProblemParams, tests []db
 		q := db.New(tx)
 		old, err := q.GetProblemBySlug(ctx, p.Slug)
 		if errors.Is(err, pgx.ErrNoRows) {
-			id, err := q.CreateProblem(ctx, p)
-			if err != nil {
-				return err
+			id, cerr := q.CreateProblem(ctx, p)
+			if cerr == nil {
+				result, revision = Created, 1
+				return replaceTests(ctx, q, id, tests)
 			}
-			result, revision = Created, 1
-			return replaceTests(ctx, q, id, tests)
+			if !errors.Is(cerr, pgx.ErrNoRows) {
+				return cerr
+			}
+			// A concurrent import created this slug first (the insert waited
+			// for it to commit). Continue as an update of that problem.
+			old, err = q.GetProblemBySlug(ctx, p.Slug)
 		}
 		if err != nil {
 			return err

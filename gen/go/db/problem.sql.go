@@ -12,6 +12,7 @@ import (
 const createProblem = `-- name: CreateProblem :one
 INSERT INTO problems (slug, title, statement_md, time_limit_ms, memory_limit_kib, checker)
 VALUES ($1, $2, $3, $4, $5, $6)
+ON CONFLICT (slug) DO NOTHING
 RETURNING id
 `
 
@@ -24,6 +25,8 @@ type CreateProblemParams struct {
 	Checker        string
 }
 
+// Returns no row if the slug already exists (for example, created by a
+// concurrent import); the caller then updates that problem instead.
 func (q *Queries) CreateProblem(ctx context.Context, arg CreateProblemParams) (int64, error) {
 	row := q.db.QueryRow(ctx, createProblem,
 		arg.Slug,

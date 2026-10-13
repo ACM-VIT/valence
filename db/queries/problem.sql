@@ -33,8 +33,11 @@ INSERT INTO tests (problem_id, ordinal, input_hash, input_size, output_hash, out
 VALUES ($1, $2, $3, $4, $5, $6, $7);
 
 -- name: CreateProblem :one
+-- Returns no row if the slug already exists (for example, created by a
+-- concurrent import); the caller then updates that problem instead.
 INSERT INTO problems (slug, title, statement_md, time_limit_ms, memory_limit_kib, checker)
 VALUES ($1, $2, $3, $4, $5, $6)
+ON CONFLICT (slug) DO NOTHING
 RETURNING id;
 
 -- name: UpdateProblem :one

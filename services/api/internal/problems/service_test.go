@@ -38,7 +38,7 @@ func newTestService(t *testing.T) (*Service, *pgxpool.Pool, blob.Store, string) 
 	t.Cleanup(func() {
 		pool.Exec(context.Background(), `DELETE FROM problems WHERE slug LIKE $1`, prefix+"%")
 	})
-	return NewService(db.New(pool), blobs), pool, blobs, prefix
+	return NewService(pool, blobs), pool, blobs, prefix
 }
 
 func addProblem(t *testing.T, pool *pgxpool.Pool, slug, visibility string) int64 {

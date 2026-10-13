@@ -4,9 +4,11 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strconv"
 	"unicode/utf8"
 
@@ -72,6 +74,9 @@ func Load(dir string) (*Package, error) {
 		dec.KnownFields(true) // unknown keys are errors
 		if err := dec.Decode(&m); err != nil {
 			fail("problem.yaml: %v", err)
+		} else if err := dec.Decode(new(any)); !errors.Is(err, io.EOF) {
+			// A second document would otherwise be ignored, typos and all.
+			fail("problem.yaml: must contain exactly one YAML document")
 		}
 		if m.Version != 0 {
 			fail("problem.yaml: version must be 0")
@@ -93,11 +98,11 @@ func Load(dir string) (*Package, error) {
 		}
 	}
 
-	statement, err := os.ReadFile(filepath.Join(dir, "statement.md"))
+	statement, err := readAtMost(filepath.Join(dir, "statement.md"), maxStatementBytes)
 	if err != nil {
 		fail("statement.md: %v", err)
 	} else if len(statement) > maxStatementBytes {
-		fail("statement.md: %d bytes, the limit is %d", len(statement), maxStatementBytes)
+		fail("statement.md: larger than the limit of %d bytes", maxStatementBytes)
 	} else if !utf8.Valid(statement) {
 		fail("statement.md: not valid UTF-8")
 	}
@@ -149,8 +154,10 @@ func loadTests(dir string, fail func(string, ...any)) []TestFiles {
 	for _, e := range entries {
 		name := e.Name()
 		match := testFilePattern.FindStringSubmatch(name)
-		if e.IsDir() || match == nil {
-			fail("tests/%s: only NN.in and NN.out files belong here", name)
+		// Only plain files: a symlink could point at /dev/zero or outside
+		// the package, and its reported size is the link's, not the target's.
+		if match == nil || !e.Type().IsRegular() {
+			fail("tests/%s: only regular NN.in and NN.out files belong here", name)
 			continue
 		}
 		if width == 0 {
@@ -158,12 +165,19 @@ func loadTests(dir string, fail func(string, ...any)) []TestFiles {
 		} else if len(match[1]) != width {
 			fail("tests/%s: use the same number of digits for every test", name)
 		}
-		if info, err := e.Info(); err == nil && info.Size() > maxTestFileBytes {
+		info, err := e.Info()
+		if err != nil {
+			fail("tests/%s: %v", name, err)
+			continue
+		}
+		if info.Size() > maxTestFileBytes {
 			fail("tests/%s: larger than 64 MiB", name)
+		} else if msg := checkTestText(filepath.Join(dir, name)); msg != "" {
+			fail("tests/%s: %s", name, msg)
 		}
 
-		n, _ := strconv.Atoi(match[1])
-		if n == 0 {
+		n, err := strconv.Atoi(match[1])
+		if err != nil || n < 1 {
 			fail("tests/%s: tests are numbered from 01", name)
 			continue
 		}
@@ -182,23 +196,59 @@ func loadTests(dir string, fail func(string, ...any)) []TestFiles {
 		fail("tests: at least one test is required")
 		return nil
 	}
-	last := 0
+	// Walk only the numbers that exist, so a file named 1000000000.in can't
+	// make us allocate or loop over a billion missing tests.
+	nums := make([]int, 0, len(files))
 	for n := range files {
-		last = max(last, n)
+		nums = append(nums, n)
 	}
-	tests := make([]TestFiles, 0, last)
-	for i := 1; i <= last; i++ {
-		t, ok := files[i]
+	slices.Sort(nums)
+	tests := make([]TestFiles, 0, len(nums))
+	gap := false
+	for i, n := range nums {
+		if n != i+1 && !gap {
+			fail("tests: test %d is missing; number tests from 1 with no gaps", i+1)
+			gap = true
+		}
+		t := files[n]
 		switch {
-		case !ok:
-			fail("tests: test %d is missing; number tests from 1 with no gaps", i)
-			continue
 		case t.In == "":
-			fail("tests: test %d has an .out but no .in", i)
+			fail("tests: test %d has an .out but no .in", n)
 		case t.Out == "":
-			fail("tests: test %d has an .in but no .out", i)
+			fail("tests: test %d has an .in but no .out", n)
 		}
 		tests = append(tests, *t)
 	}
 	return tests
+}
+
+// checkTestText applies the format's rules for test files: UTF-8, \n line
+// endings and a final newline. Samples go out as protobuf strings, which
+// must be valid UTF-8. It returns "" when the file is fine.
+func checkTestText(path string) string {
+	b, err := os.ReadFile(path)
+	switch {
+	case err != nil:
+		return err.Error()
+	case len(b) == 0:
+		return ""
+	case !utf8.Valid(b):
+		return "not valid UTF-8"
+	case bytes.IndexByte(b, '\r') >= 0:
+		return `use \n line endings, not \r\n`
+	case b[len(b)-1] != '\n':
+		return "must end with a newline"
+	}
+	return ""
+}
+
+// readAtMost reads up to limit+1 bytes of path, so an oversized file is
+// detected without loading all of it.
+func readAtMost(path string, limit int64) ([]byte, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	return io.ReadAll(io.LimitReader(f, limit+1))
 }

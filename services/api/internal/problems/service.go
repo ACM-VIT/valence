@@ -10,6 +10,7 @@ import (
 
 	"connectrpc.com/connect"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/ACM-VIT/valence/gen/go/db"
 	v1 "github.com/ACM-VIT/valence/gen/go/valence/v1"
@@ -24,14 +25,15 @@ const (
 )
 
 type Service struct {
+	pool  *pgxpool.Pool
 	q     *db.Queries
 	blobs blob.Store
 }
 
 var _ valencev1connect.ProblemServiceHandler = (*Service)(nil)
 
-func NewService(q *db.Queries, blobs blob.Store) *Service {
-	return &Service{q: q, blobs: blobs}
+func NewService(pool *pgxpool.Pool, blobs blob.Store) *Service {
+	return &Service{pool: pool, q: db.New(pool), blobs: blobs}
 }
 
 func canSeePrivate(ctx context.Context) bool {
@@ -84,15 +86,28 @@ func (s *Service) ListProblems(ctx context.Context, req *connect.Request[v1.List
 }
 
 func (s *Service) GetProblem(ctx context.Context, req *connect.Request[v1.GetProblemRequest]) (*connect.Response[v1.GetProblemResponse], error) {
-	p, err := s.q.GetProblemBySlug(ctx, req.Msg.Slug)
-	if errors.Is(err, pgx.ErrNoRows) || (err == nil && p.Visibility != db.ProblemVisibilityPublic && !canSeePrivate(ctx)) {
+	// One snapshot for both reads, so a concurrent import can't pair the
+	// old statement and limits with the new samples.
+	var (
+		p     db.Problem
+		tests []db.Test
+	)
+	err := pgx.BeginTxFunc(ctx, s.pool, pgx.TxOptions{IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly},
+		func(tx pgx.Tx) error {
+			q := db.New(tx)
+			var err error
+			if p, err = q.GetProblemBySlug(ctx, req.Msg.Slug); err != nil {
+				return err
+			}
+			if p.Visibility != db.ProblemVisibilityPublic && !canSeePrivate(ctx) {
+				return pgx.ErrNoRows // a private problem doesn't exist to contestants
+			}
+			tests, err = q.ListSampleTests(ctx, p.ID)
+			return err
+		})
+	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, connect.NewError(connect.CodeNotFound, fmt.Errorf("problem %q not found", req.Msg.Slug))
 	}
-	if err != nil {
-		return nil, internal(ctx, err)
-	}
-
-	tests, err := s.q.ListSampleTests(ctx, p.ID)
 	if err != nil {
 		return nil, internal(ctx, err)
 	}

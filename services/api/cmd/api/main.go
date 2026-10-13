@@ -13,7 +13,6 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/ACM-VIT/valence/gen/go/db"
 	"github.com/ACM-VIT/valence/gen/go/valence/v1/valencev1connect"
 	"github.com/ACM-VIT/valence/pkg/blob"
 	"github.com/ACM-VIT/valence/pkg/config"
@@ -88,7 +87,7 @@ func run() error {
 	if err != nil {
 		return fmt.Errorf("blob store: %w", err)
 	}
-	mux.Handle(valencev1connect.NewProblemServiceHandler(problems.NewService(db.New(pool), blobs)))
+	mux.Handle(valencev1connect.NewProblemServiceHandler(problems.NewService(pool, blobs)))
 
 	slog.Info("API starting",
 		"version", version.String(),

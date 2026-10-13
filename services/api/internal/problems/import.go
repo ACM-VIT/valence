@@ -2,6 +2,8 @@ package problems
 
 import (
 	"context"
+	"fmt"
+	"io"
 	"os"
 
 	"github.com/ACM-VIT/valence/gen/go/db"
@@ -40,11 +42,28 @@ func (s *Store) Import(ctx context.Context, blobs blob.Store, p *Package) (Impor
 	}, tests)
 }
 
+// putFile stores one test file. It re-checks what Load checked, because the
+// file may have changed since: it must still be a regular file, and copying
+// stops after maxTestFileBytes instead of trusting the earlier size.
 func putFile(ctx context.Context, blobs blob.Store, path string) (blob.Key, int64, error) {
+	info, err := os.Lstat(path)
+	if err != nil {
+		return "", 0, err
+	}
+	if !info.Mode().IsRegular() {
+		return "", 0, fmt.Errorf("%s: not a regular file", path)
+	}
 	f, err := os.Open(path)
 	if err != nil {
 		return "", 0, err
 	}
 	defer f.Close()
-	return blobs.Put(ctx, f)
+	key, n, err := blobs.Put(ctx, io.LimitReader(f, maxTestFileBytes+1))
+	if err != nil {
+		return "", 0, err
+	}
+	if n > maxTestFileBytes {
+		return "", 0, fmt.Errorf("%s: larger than 64 MiB", path)
+	}
+	return key, n, nil
 }
