@@ -3,8 +3,10 @@ package problems
 import (
 	"context"
 	"crypto/rand"
+	"fmt"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -12,7 +14,10 @@ import (
 	"github.com/ACM-VIT/valence/gen/go/db"
 )
 
-func TestReplaceTests(t *testing.T) {
+// testProblem connects to DATABASE_URL and creates a throwaway problem;
+// deleting it at the end cascades to its tests.
+func testProblem(t *testing.T) (*pgxpool.Pool, int64) {
+	t.Helper()
 	url := os.Getenv("DATABASE_URL")
 	if url == "" {
 		t.Skip("DATABASE_URL not set")
@@ -24,7 +29,6 @@ func TestReplaceTests(t *testing.T) {
 	}
 	t.Cleanup(pool.Close)
 
-	// A throwaway problem; deleting it cascades to its tests.
 	slug := "test-" + strings.ToLower(rand.Text()[:10])
 	var id int64
 	if err := pool.QueryRow(ctx,
@@ -32,6 +36,12 @@ func TestReplaceTests(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { pool.Exec(context.Background(), `DELETE FROM problems WHERE id = $1`, id) })
+	return pool, id
+}
+
+func TestReplaceTests(t *testing.T) {
+	pool, id := testProblem(t)
+	ctx := context.Background()
 
 	s, q := NewStore(pool), db.New(pool)
 	hash := strings.Repeat("a", 64)
@@ -63,5 +73,55 @@ func TestReplaceTests(t *testing.T) {
 	}
 	if all, _ = q.ListTests(ctx, id); len(all) != 2 {
 		t.Fatalf("failed replace changed the tests: %d left, want 2", len(all))
+	}
+}
+
+// Replacements for the same problem run one at a time: they all succeed, and
+// the result is exactly one caller's test set, never a mix.
+func TestReplaceTestsConcurrent(t *testing.T) {
+	pool, id := testProblem(t)
+	ctx := context.Background()
+	s, q := NewStore(pool), db.New(pool)
+
+	const writers = 8
+	sets := make([][]db.InsertTestsParams, writers)
+	for w := range writers {
+		hash := fmt.Sprintf("%064x", w+1) // tells the writers apart
+		for n := range w + 1 {            // writer w saves tests 1..w+1
+			sets[w] = append(sets[w], db.InsertTestsParams{Ordinal: int32(n + 1), InputHash: hash, OutputHash: hash})
+		}
+	}
+
+	for round := range 5 {
+		var wg sync.WaitGroup
+		errs := make([]error, writers)
+		for w := range writers {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				errs[w] = s.ReplaceTests(ctx, id, sets[w])
+			}()
+		}
+		wg.Wait()
+		for w, err := range errs {
+			if err != nil {
+				t.Fatalf("round %d: writer %d: %v", round, w, err)
+			}
+		}
+
+		got, err := q.ListTests(ctx, id)
+		if err != nil || len(got) == 0 {
+			t.Fatalf("round %d: %d tests, err %v", round, len(got), err)
+		}
+		winner := got[0].InputHash
+		want := sets[int(got[0].InputHash[63]-'0')-1]
+		if len(got) != len(want) {
+			t.Fatalf("round %d: %d tests, want writer %s's %d", round, len(got), winner, len(want))
+		}
+		for _, row := range got {
+			if row.InputHash != winner {
+				t.Fatalf("round %d: tests from different writers were mixed", round)
+			}
+		}
 	}
 }

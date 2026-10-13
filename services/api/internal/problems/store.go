@@ -20,6 +20,11 @@ func NewStore(pool *pgxpool.Pool) *Store {
 func (s *Store) ReplaceTests(ctx context.Context, problemID int64, tests []db.InsertTestsParams) error {
 	return pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
 		q := db.New(tx)
+		// Lock the problem first, so concurrent replacements run one at a
+		// time instead of interleaving their deletes and inserts.
+		if _, err := q.LockProblem(ctx, problemID); err != nil {
+			return err
+		}
 		if err := q.DeleteTests(ctx, problemID); err != nil {
 			return err
 		}
