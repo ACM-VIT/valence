@@ -14,6 +14,8 @@ type Config struct {
 	PublicAPIURL string `env:"PUBLIC_API_URL" envDefault:"http://localhost:8080"`
 	WebOrigin    string `env:"WEB_ORIGIN" envDefault:"http://localhost:5173"`
 
+	DevLogin bool `env:"DEV_LOGIN"`
+
 	DatabaseURL string `env:"DATABASE_URL,notEmpty"`
 
 	GitHubClientID     string `env:"GITHUB_CLIENT_ID"`

@@ -54,8 +54,10 @@ func run() error {
 		return fmt.Errorf("database: %w", err)
 	}
 
+	// Health checks sit outside WithUser so they never wait on a session lookup.
+	root := http.NewServeMux()
+	server.Health(root, pool.Ping)
 	mux := http.NewServeMux()
-	server.Health(mux, pool.Ping)
 
 	store := session.NewPostgresStore(pool)
 	go pruneSessions(ctx, store, time.Hour)
@@ -64,6 +66,7 @@ func run() error {
 	mux.HandleFunc("POST /auth/logout", sessions.Logout)
 
 	users := auth.NewUsers(pool)
+	auth.RegisterDev(mux, cfg, users, sessions)
 
 	if cfg.GitHubEnabled() {
 		gh := auth.NewGithub(cfg, users, sessions)
@@ -83,7 +86,8 @@ func run() error {
 		"github_login", cfg.GitHubEnabled(),
 		"google_login", cfg.GoogleEnabled(),
 	)
-	return server.Run(ctx, *addr, mux, 15*time.Second)
+	root.Handle("/", auth.WithUser(sessions, users, mux))
+	return server.Run(ctx, *addr, root, 15*time.Second)
 }
 
 // pruneSessions deletes expired sessions every interval until ctx is cancelled.

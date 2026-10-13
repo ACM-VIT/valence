@@ -132,3 +132,19 @@ func displayName(p profile) string {
 	}
 	return string(name[:min(len(name), 64)])
 }
+
+func (u *Users) ByID(ctx context.Context, id int64) (User, error) {
+	var usr User
+	err := u.db.QueryRow(ctx,
+		`SELECT id, handle, display_name, role::text
+		   FROM users
+		  WHERE id = $1 AND disabled_at IS NULL`, id).
+		Scan(&usr.ID, &usr.Handle, &usr.DisplayName, &usr.Role)
+	return usr, err
+}
+
+func (u *Users) SetRole(ctx context.Context, id int64, role string) error {
+	_, err := u.db.Exec(ctx,
+		`UPDATE users SET role = $2::user_role WHERE id = $1`, id, role)
+	return err
+}
