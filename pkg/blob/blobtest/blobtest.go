@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/ACM-VIT/valence/pkg/blob"
 )
@@ -111,6 +112,55 @@ func Run(t *testing.T, newStore func(t *testing.T) blob.Store) {
 			t.Fatal("content corrupted by concurrent puts")
 		}
 	})
+
+	t.Run("put with a cancelled context stores nothing", func(t *testing.T) {
+		s := newStore(t)
+		cancelled, cancel := context.WithCancel(ctx)
+		cancel()
+		data := "never stored"
+		if _, _, err := s.Put(cancelled, strings.NewReader(data)); !errors.Is(err, context.Canceled) {
+			t.Fatalf("Put err = %v, want context.Canceled", err)
+		}
+		sum := sha256.Sum256([]byte(data))
+		if ok, _ := s.Exists(ctx, blob.Key(hex.EncodeToString(sum[:]))); ok {
+			t.Fatal("blob was stored despite the cancelled context")
+		}
+	})
+
+	t.Run("cancelling mid-put stops reading", func(t *testing.T) {
+		s := newStore(t)
+		cctx, cancel := context.WithCancel(ctx)
+		defer cancel()
+		// An endless reader that cancels the context on its first read: Put
+		// must notice and return instead of draining it forever.
+		r := &endless{onFirstRead: cancel}
+		done := make(chan error, 1)
+		go func() {
+			_, _, err := s.Put(cctx, r)
+			done <- err
+		}()
+		select {
+		case err := <-done:
+			if !errors.Is(err, context.Canceled) {
+				t.Fatalf("Put err = %v, want context.Canceled", err)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatal("Put kept reading after its context was cancelled")
+		}
+	})
+}
+
+type endless struct {
+	onFirstRead func()
+	once        sync.Once
+}
+
+func (e *endless) Read(p []byte) (int, error) {
+	e.once.Do(e.onFirstRead)
+	for i := range p {
+		p[i] = 'x'
+	}
+	return len(p), nil
 }
 
 func read(t *testing.T, s blob.Store, key blob.Key) []byte {

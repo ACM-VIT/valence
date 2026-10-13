@@ -20,6 +20,10 @@ SELECT * FROM tests
 WHERE problem_id = $1 AND is_sample
 ORDER BY ordinal;
 
+-- name: LockProblem :one
+-- Serialises writers of one problem's tests until the transaction ends.
+SELECT id FROM problems WHERE id = $1 FOR UPDATE;
+
 -- name: DeleteTests :exec
 DELETE FROM tests
 WHERE problem_id =  $1;
