@@ -7,6 +7,10 @@ coverage.*
 /tmp/
 go.work.sum
 
+# Python (bytecode from running example solutions)
+__pycache__/
+*.pyc
+
 # Node
 node_modules/
 dist/
