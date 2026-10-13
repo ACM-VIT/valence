@@ -69,6 +69,7 @@ func TestJudgingLifecycle(t *testing.T) {
 	ctx := context.Background()
 	s, q := NewStore(pool), db.New(pool)
 	id := submit(t, q, userID, problemID)
+	const tok = "lease-a" // the worker's queue lease token
 
 	// A worker takes the job and judges test 1, then test 2.
 	steps := []struct {
@@ -82,7 +83,7 @@ func TestJudgingLifecycle(t *testing.T) {
 		{db.SubmissionStatusChecking, db.SubmissionStatusRunning, ptr[int32](2)},
 	}
 	for _, st := range steps {
-		if err := s.SetStatus(ctx, id, 1, st.from, st.to, st.test); err != nil {
+		if err := s.SetStatus(ctx, id, 1, tok, st.from, st.to, st.test); err != nil {
 			t.Fatalf("%s → %s: %v", st.from, st.to, err)
 		}
 	}
@@ -92,10 +93,10 @@ func TestJudgingLifecycle(t *testing.T) {
 	}
 
 	// Rule-breaking and out-of-date changes are refused.
-	if err := s.SetStatus(ctx, id, 1, db.SubmissionStatusRunning, db.SubmissionStatusQueued, nil); !errors.Is(err, ErrBadTransition) {
+	if err := s.SetStatus(ctx, id, 1, tok, db.SubmissionStatusRunning, db.SubmissionStatusQueued, nil); !errors.Is(err, ErrBadTransition) {
 		t.Errorf("running → queued: got %v, want ErrBadTransition", err)
 	}
-	if err := s.SetStatus(ctx, id, 1, db.SubmissionStatusCompiling, db.SubmissionStatusRunning, nil); !errors.Is(err, ErrStale) {
+	if err := s.SetStatus(ctx, id, 1, tok, db.SubmissionStatusCompiling, db.SubmissionStatusRunning, nil); !errors.Is(err, ErrStale) {
 		t.Errorf("stale from-status: got %v, want ErrStale", err)
 	}
 
@@ -104,13 +105,13 @@ func TestJudgingLifecycle(t *testing.T) {
 		{Ordinal: 1, Verdict: db.VerdictAC, TimeMS: 100, MemoryKiB: 2000},
 		{Ordinal: 2, Verdict: db.VerdictWA, TimeMS: 120, MemoryKiB: 2048},
 	}}
-	if done, err := s.Finalize(ctx, id, 1, wa); err != nil || !done {
+	if done, err := s.Finalize(ctx, id, 1, tok, wa); err != nil || !done {
 		t.Fatalf("Finalize = %v, %v; want true, nil", done, err)
 	}
 
 	// The worker retries its report with different results: nothing changes.
 	ac := Result{Verdict: db.VerdictAC, Tests: []TestResult{{Ordinal: 3, Verdict: db.VerdictAC}}}
-	if done, err := s.Finalize(ctx, id, 1, ac); err != nil || done {
+	if done, err := s.Finalize(ctx, id, 1, tok, ac); err != nil || done {
 		t.Fatalf("second Finalize = %v, %v; want false, nil", done, err)
 	}
 
@@ -125,8 +126,75 @@ func TestJudgingLifecycle(t *testing.T) {
 	}
 
 	// Finalized is the end.
-	if err := s.SetStatus(ctx, id, 1, db.SubmissionStatusFinalized, db.SubmissionStatusLeased, nil); !errors.Is(err, ErrBadTransition) {
+	if err := s.SetStatus(ctx, id, 1, tok, db.SubmissionStatusFinalized, db.SubmissionStatusLeased, nil); !errors.Is(err, ErrBadTransition) {
 		t.Errorf("finalized → leased: got %v, want ErrBadTransition", err)
+	}
+}
+
+func TestFinalizeNeedsLease(t *testing.T) {
+	pool, userID, problemID := setup(t)
+	ctx := context.Background()
+	s, q := NewStore(pool), db.New(pool)
+	id := submit(t, q, userID, problemID)
+
+	// No worker has leased the attempt yet: finalizing it changes nothing.
+	ac := Result{Verdict: db.VerdictAC, Tests: []TestResult{{Ordinal: 1, Verdict: db.VerdictAC}}}
+	if done, err := s.Finalize(ctx, id, 1, "lease-a", ac); err != nil || done {
+		t.Fatalf("Finalize on queued attempt = %v, %v; want false, nil", done, err)
+	}
+	if _, err := s.Finalize(ctx, id, 1, "", ac); !errors.Is(err, ErrNoLease) {
+		t.Errorf("Finalize without token: got %v, want ErrNoLease", err)
+	}
+	if err := s.SetStatus(ctx, id, 1, "", db.SubmissionStatusQueued, db.SubmissionStatusLeased, nil); !errors.Is(err, ErrNoLease) {
+		t.Errorf("SetStatus without token: got %v, want ErrNoLease", err)
+	}
+
+	a, _ := q.GetAttempt(ctx, db.GetAttemptParams{SubmissionID: id, Attempt: 1})
+	sub, _ := q.GetSubmission(ctx, id)
+	results, _ := q.ListTestResults(ctx, db.ListTestResultsParams{SubmissionID: id, Attempt: 1})
+	if a.Status != db.SubmissionStatusQueued || a.Verdict.Valid || sub.Status != db.SubmissionStatusQueued || sub.Verdict.Valid || len(results) != 0 {
+		t.Fatalf("after Finalize on queued attempt: attempt %s %+v, submission %s %+v, %d results; want unchanged",
+			a.Status, a.Verdict, sub.Status, sub.Verdict, len(results))
+	}
+}
+
+func TestOldWorkerLosesAttempt(t *testing.T) {
+	pool, userID, problemID := setup(t)
+	ctx := context.Background()
+	s, q := NewStore(pool), db.New(pool)
+	id := submit(t, q, userID, problemID)
+
+	// Worker A starts compiling, then stalls and its queue lease expires.
+	must := func(err error) {
+		t.Helper()
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	must(s.SetStatus(ctx, id, 1, "lease-a", db.SubmissionStatusQueued, db.SubmissionStatusLeased, nil))
+	must(s.SetStatus(ctx, id, 1, "lease-a", db.SubmissionStatusLeased, db.SubmissionStatusCompiling, nil))
+
+	// Worker B takes over and gets back to compiling.
+	must(s.SetStatus(ctx, id, 1, "lease-b", db.SubmissionStatusCompiling, db.SubmissionStatusLeased, nil))
+	must(s.SetStatus(ctx, id, 1, "lease-b", db.SubmissionStatusLeased, db.SubmissionStatusCompiling, nil))
+
+	// A wakes up. The status matches what it expects, but the lease is B's.
+	if err := s.SetStatus(ctx, id, 1, "lease-a", db.SubmissionStatusCompiling, db.SubmissionStatusRunning, ptr[int32](1)); !errors.Is(err, ErrStale) {
+		t.Errorf("old worker SetStatus: got %v, want ErrStale", err)
+	}
+	ce := Result{Verdict: db.VerdictCE, Tests: nil}
+	if done, err := s.Finalize(ctx, id, 1, "lease-a", ce); err != nil || done {
+		t.Fatalf("old worker Finalize = %v, %v; want false, nil", done, err)
+	}
+
+	// B's result is the one that counts.
+	wa := Result{Verdict: db.VerdictWA, Tests: []TestResult{{Ordinal: 1, Verdict: db.VerdictWA}}}
+	if done, err := s.Finalize(ctx, id, 1, "lease-b", wa); err != nil || !done {
+		t.Fatalf("new worker Finalize = %v, %v; want true, nil", done, err)
+	}
+	sub, _ := q.GetSubmission(ctx, id)
+	if !sub.Verdict.Valid || sub.Verdict.Verdict != db.VerdictWA {
+		t.Fatalf("verdict %+v, want WA", sub.Verdict)
 	}
 }
 

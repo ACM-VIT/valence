@@ -22,12 +22,22 @@ WHERE user_id = sqlc.arg(user_id)
 ORDER BY id desc
 LIMIT sqlc.arg(page_size);
 
--- name: SetAttemptStatus :execrows
+-- name: ClaimAttempt :execrows
+-- Moves the attempt to 'leased' for the worker holding lease_token.
 UPDATE submission_attempts
-SET status = sqlc.arg(to_status), started_at = COALESCE(started_at, now())
+SET status = 'leased', lease_token = sqlc.arg(lease_token)::text,
+    started_at = COALESCE(started_at, now())
 WHERE submission_id = sqlc.arg(submission_id)
     AND attempt = sqlc.arg(attempt)
     AND status = sqlc.arg(from_status);
+
+-- name: SetAttemptStatus :execrows
+UPDATE submission_attempts
+SET status = sqlc.arg(to_status)
+WHERE submission_id = sqlc.arg(submission_id)
+    AND attempt = sqlc.arg(attempt)
+    AND status = sqlc.arg(from_status)
+    AND lease_token = sqlc.arg(lease_token)::text;
 
 -- name: SetSubmissionStatus :exec
 UPDATE submissions
@@ -55,7 +65,8 @@ SET status = 'finalized', verdict = sqlc.arg(verdict)::verdict,
     compile_output = sqlc.narg(compile_output), finished_at = now()
 WHERE submission_id = sqlc.arg(submission_id)
     AND attempt = sqlc.arg(attempt)
-    AND status <> 'finalized';
+    AND status NOT IN ('queued', 'finalized')
+    AND lease_token = sqlc.arg(lease_token)::text;
 
 -- name: FinalizeSubmission :exec
 UPDATE submissions

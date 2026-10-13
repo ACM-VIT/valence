@@ -37,6 +37,11 @@ func New() *Queue {
 var _ queue.Queue = (*Queue)(nil)
 
 func (q *Queue) Enqueue(_ context.Context, j queue.Job) (string, error) {
+	if err := queue.CheckPriority(j.Priority); err != nil {
+		return "", err
+	}
+	// Copy, so the caller can reuse its buffer.
+	j.Payload = slices.Clone(j.Payload)
 	q.mu.Lock()
 	defer q.mu.Unlock()
 	if id, ok := q.dedupe[j.DedupeKey]; ok && j.DedupeKey != "" {
@@ -89,13 +94,17 @@ func (q *Queue) tryLease(kinds []string, ttl time.Duration) (queue.Lease, bool, 
 	best.attempts++
 	best.token = rand.Text()
 	best.until = now.Add(ttl)
-	return queue.Lease{Job: best.Job, Attempt: best.attempts, Token: best.token, Deadline: best.until}, true, nil
+	// Copy, so a worker changing its payload can't change what a retry gets.
+	j := best.Job
+	j.Payload = slices.Clone(j.Payload)
+	return queue.Lease{Job: j, Attempt: best.attempts, Token: best.token, Deadline: best.until}, true, nil
 }
 
 // owned returns the job if l is still its current lease. Call with q.mu held.
+// An unleased job has an empty token, so an empty l.Token never matches.
 func (q *Queue) owned(l queue.Lease) (*job, error) {
 	j, ok := q.jobs[l.Job.ID]
-	if !ok || j.token != l.Token {
+	if !ok || l.Token == "" || j.token != l.Token {
 		return nil, queue.ErrLeaseLost
 	}
 	return j, nil

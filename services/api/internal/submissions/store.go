@@ -14,6 +14,7 @@ import (
 var (
 	ErrBadTransition = errors.New("submissions: status change not allowed")
 	ErrStale         = errors.New("submissions: attempt changed underneath")
+	ErrNoLease       = errors.New("submissions: lease token required")
 )
 
 type Store struct {
@@ -24,15 +25,30 @@ func NewStore(pool *pgxpool.Pool) *Store {
 	return &Store{pool: pool}
 }
 
-func (s *Store) SetStatus(ctx context.Context, id int64, attempt int32, from, to db.SubmissionStatus, currentTest *int32) error {
+// SetStatus moves an attempt from one status to another for the worker
+// holding the queue lease token. Moving to leased records the token; every
+// other change, and Finalize, must carry the same token, so a worker whose
+// lease expired can't write over its replacement.
+func (s *Store) SetStatus(ctx context.Context, id int64, attempt int32, token string, from, to db.SubmissionStatus, currentTest *int32) error {
 	if to == db.SubmissionStatusFinalized || !CanTransition(from, to) {
 		return fmt.Errorf("%w: %s -> %s", ErrBadTransition, from, to)
 	}
+	if token == "" {
+		return ErrNoLease
+	}
 	return pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
 		q := db.New(tx)
-		n, err := q.SetAttemptStatus(ctx, db.SetAttemptStatusParams{
-			SubmissionID: id, Attempt: attempt, FromStatus: from, ToStatus: to,
-		})
+		var n int64
+		var err error
+		if to == db.SubmissionStatusLeased {
+			n, err = q.ClaimAttempt(ctx, db.ClaimAttemptParams{
+				SubmissionID: id, Attempt: attempt, FromStatus: from, LeaseToken: token,
+			})
+		} else {
+			n, err = q.SetAttemptStatus(ctx, db.SetAttemptStatusParams{
+				SubmissionID: id, Attempt: attempt, FromStatus: from, ToStatus: to, LeaseToken: token,
+			})
+		}
 		if err != nil {
 			return err
 		}
@@ -60,12 +76,18 @@ type TestResult struct {
 	MemoryKiB int32
 }
 
-func (s *Store) Finalize(ctx context.Context, id int64, attempt int32, r Result) (bool, error) {
+// Finalize saves the verdict if token still owns the attempt and it isn't
+// finalized yet. It reports false, with no error, when nothing changed: the
+// attempt was already finalized, never leased, or leased by another worker.
+func (s *Store) Finalize(ctx context.Context, id int64, attempt int32, token string, r Result) (bool, error) {
+	if token == "" {
+		return false, ErrNoLease
+	}
 	var done bool
 	err := pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
 		q := db.New(tx)
 		n, err := q.FinalizeAttempt(ctx, db.FinalizeAttemptParams{
-			SubmissionID: id, Attempt: attempt, Verdict: r.Verdict,
+			SubmissionID: id, Attempt: attempt, LeaseToken: token, Verdict: r.Verdict,
 			TimeMs: r.TimeMS, MemoryKib: r.MemoryKiB, CompileOutput: r.CompileOutput,
 		})
 		if err != nil || n == 0 {

@@ -278,6 +278,7 @@ type SubmissionAttempt struct {
 	CreatedAt     time.Time
 	StartedAt     *time.Time
 	FinishedAt    *time.Time
+	LeaseToken    *string
 }
 
 type Test struct {

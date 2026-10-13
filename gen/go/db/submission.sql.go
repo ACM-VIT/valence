@@ -10,6 +10,36 @@ import (
 	"time"
 )
 
+const claimAttempt = `-- name: ClaimAttempt :execrows
+UPDATE submission_attempts
+SET status = 'leased', lease_token = $1::text,
+    started_at = COALESCE(started_at, now())
+WHERE submission_id = $2
+    AND attempt = $3
+    AND status = $4
+`
+
+type ClaimAttemptParams struct {
+	LeaseToken   string
+	SubmissionID int64
+	Attempt      int32
+	FromStatus   SubmissionStatus
+}
+
+// Moves the attempt to 'leased' for the worker holding lease_token.
+func (q *Queries) ClaimAttempt(ctx context.Context, arg ClaimAttemptParams) (int64, error) {
+	result, err := q.db.Exec(ctx, claimAttempt,
+		arg.LeaseToken,
+		arg.SubmissionID,
+		arg.Attempt,
+		arg.FromStatus,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const createAttempt = `-- name: CreateAttempt :exec
 INSERT INTO submission_attempts (submission_id, attempt)
 VALUES ($1, $2)
@@ -59,7 +89,8 @@ SET status = 'finalized', verdict = $1::verdict,
     compile_output = $4, finished_at = now()
 WHERE submission_id = $5
     AND attempt = $6
-    AND status <> 'finalized'
+    AND status NOT IN ('queued', 'finalized')
+    AND lease_token = $7::text
 `
 
 type FinalizeAttemptParams struct {
@@ -69,6 +100,7 @@ type FinalizeAttemptParams struct {
 	CompileOutput *string
 	SubmissionID  int64
 	Attempt       int32
+	LeaseToken    string
 }
 
 func (q *Queries) FinalizeAttempt(ctx context.Context, arg FinalizeAttemptParams) (int64, error) {
@@ -79,6 +111,7 @@ func (q *Queries) FinalizeAttempt(ctx context.Context, arg FinalizeAttemptParams
 		arg.CompileOutput,
 		arg.SubmissionID,
 		arg.Attempt,
+		arg.LeaseToken,
 	)
 	if err != nil {
 		return 0, err
@@ -114,7 +147,7 @@ func (q *Queries) FinalizeSubmission(ctx context.Context, arg FinalizeSubmission
 }
 
 const getAttempt = `-- name: GetAttempt :one
-SELECT submission_id, attempt, status, verdict, time_ms, memory_kib, compile_output, provider, worker, infra_retries, last_error, created_at, started_at, finished_at FROM submission_attempts WHERE submission_id = $1 AND attempt = $2
+SELECT submission_id, attempt, status, verdict, time_ms, memory_kib, compile_output, provider, worker, infra_retries, last_error, created_at, started_at, finished_at, lease_token FROM submission_attempts WHERE submission_id = $1 AND attempt = $2
 `
 
 type GetAttemptParams struct {
@@ -140,6 +173,7 @@ func (q *Queries) GetAttempt(ctx context.Context, arg GetAttemptParams) (Submiss
 		&i.CreatedAt,
 		&i.StartedAt,
 		&i.FinishedAt,
+		&i.LeaseToken,
 	)
 	return i, err
 }
@@ -303,10 +337,11 @@ func (q *Queries) ListUserSubmissions(ctx context.Context, arg ListUserSubmissio
 
 const setAttemptStatus = `-- name: SetAttemptStatus :execrows
 UPDATE submission_attempts
-SET status = $1, started_at = COALESCE(started_at, now())
+SET status = $1
 WHERE submission_id = $2
     AND attempt = $3
     AND status = $4
+    AND lease_token = $5::text
 `
 
 type SetAttemptStatusParams struct {
@@ -314,6 +349,7 @@ type SetAttemptStatusParams struct {
 	SubmissionID int64
 	Attempt      int32
 	FromStatus   SubmissionStatus
+	LeaseToken   string
 }
 
 func (q *Queries) SetAttemptStatus(ctx context.Context, arg SetAttemptStatusParams) (int64, error) {
@@ -322,6 +358,7 @@ func (q *Queries) SetAttemptStatus(ctx context.Context, arg SetAttemptStatusPara
 		arg.SubmissionID,
 		arg.Attempt,
 		arg.FromStatus,
+		arg.LeaseToken,
 	)
 	if err != nil {
 		return 0, err

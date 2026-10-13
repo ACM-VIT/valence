@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -14,21 +15,53 @@ import (
 	"github.com/ACM-VIT/valence/pkg/queue"
 )
 
-const pollInterval = 5 * time.Second
+const (
+	pollInterval  = 5 * time.Second
+	listenBackoff = time.Second
+)
 
+// Queue is a queue.Queue backed by the jobs table.
+//
+// Idle Lease calls don't hold pool connections. One listener connection,
+// opened outside the pool on the first Lease, waits for NOTIFY and wakes
+// every idle Lease, so Enqueue, Heartbeat and Ack always find a free
+// connection even with a one-connection pool.
 type Queue struct {
 	pool *pgxpool.Pool
 	q    *db.Queries
 	poll time.Duration
+
+	start sync.Once
+	ctx   context.Context // cancelled by Close
+	stop  context.CancelFunc
+	done  chan struct{} // closed when the listener exits
+
+	mu   sync.Mutex
+	wake chan struct{} // closed and replaced on every notification
 }
 
 func New(pool *pgxpool.Pool) *Queue {
-	return &Queue{pool: pool, q: db.New(pool), poll: pollInterval}
+	ctx, stop := context.WithCancel(context.Background())
+	return &Queue{
+		pool: pool, q: db.New(pool), poll: pollInterval,
+		ctx: ctx, stop: stop, done: make(chan struct{}),
+		wake: make(chan struct{}),
+	}
 }
 
 var _ queue.Queue = (*Queue)(nil)
 
+// Close stops the listener. It does not close the pool.
+func (q *Queue) Close() {
+	q.start.Do(func() { close(q.done) }) // never started: nothing to wait for
+	q.stop()
+	<-q.done
+}
+
 func (q *Queue) Enqueue(ctx context.Context, job queue.Job) (string, error) {
+	if err := queue.CheckPriority(job.Priority); err != nil {
+		return "", err
+	}
 	payload := job.Payload
 	if payload == nil {
 		payload = []byte{}
@@ -50,21 +83,12 @@ func (q *Queue) Enqueue(ctx context.Context, job queue.Job) (string, error) {
 }
 
 func (q *Queue) Lease(ctx context.Context, kinds []string, ttl time.Duration) (queue.Lease, error) {
-	conn, err := q.pool.Acquire(ctx)
-	if err != nil {
-		return queue.Lease{}, err
-	}
-	defer func() {
-		conn.Exec(context.Background(), "UNLISTEN jobs")
-		conn.Release()
-	}()
-	if _, err := conn.Exec(ctx, "LISTEN jobs"); err != nil {
-		return queue.Lease{}, err
-	}
-
-	lq := db.New(conn)
+	q.start.Do(func() { go q.listen() })
 	for {
-		row, err := lq.LeaseJob(ctx, db.LeaseJobParams{TtlMs: ttl.Milliseconds(), Kinds: kinds})
+		// Take the wake channel before looking, so a job inserted between
+		// the look and the wait still wakes us.
+		wake := q.wakeChan()
+		row, err := q.q.LeaseJob(ctx, db.LeaseJobParams{TtlMs: ttl.Milliseconds(), Kinds: kinds})
 		if err == nil {
 			return toLease(row), nil
 		}
@@ -72,15 +96,62 @@ func (q *Queue) Lease(ctx context.Context, kinds []string, ttl time.Duration) (q
 			return queue.Lease{}, err
 		}
 
-		wait, cancel := context.WithTimeout(ctx, q.poll)
-		err = conn.Conn().PgConn().WaitForNotification(wait)
-		cancel()
-		if ctx.Err() != nil {
+		// The poll also covers nacked and expired jobs, which come back
+		// without a NOTIFY, and any time the listener is reconnecting.
+		timer := time.NewTimer(q.poll)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
 			return queue.Lease{}, ctx.Err()
+		case <-wake:
+		case <-timer.C:
 		}
-		if err != nil && !errors.Is(err, context.DeadlineExceeded) {
-			return queue.Lease{}, err
+		timer.Stop()
+	}
+}
+
+func (q *Queue) wakeChan() chan struct{} {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	return q.wake
+}
+
+func (q *Queue) broadcast() {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	close(q.wake)
+	q.wake = make(chan struct{})
+}
+
+// listen keeps one LISTEN connection open until Close, reconnecting after errors.
+func (q *Queue) listen() {
+	defer close(q.done)
+	for {
+		q.listenOnce()
+		select {
+		case <-q.ctx.Done():
+			return
+		case <-time.After(listenBackoff):
 		}
+	}
+}
+
+func (q *Queue) listenOnce() {
+	conn, err := pgx.ConnectConfig(q.ctx, q.pool.Config().ConnConfig)
+	if err != nil {
+		return
+	}
+	defer conn.Close(context.Background())
+	if _, err := conn.Exec(q.ctx, "LISTEN jobs"); err != nil {
+		return
+	}
+	// Jobs may have arrived while we weren't listening.
+	q.broadcast()
+	for {
+		if _, err := conn.WaitForNotification(q.ctx); err != nil {
+			return
+		}
+		q.broadcast()
 	}
 }
 
@@ -155,7 +226,7 @@ func parse(l queue.Lease) (int64, pgtype.UUID, error) {
 		return 0, pgtype.UUID{}, queue.ErrLeaseLost
 	}
 	var token pgtype.UUID
-	if err := token.Scan(l.Token); err != nil {
+	if err := token.Scan(l.Token); err != nil || !token.Valid {
 		return 0, pgtype.UUID{}, queue.ErrLeaseLost
 	}
 	return id, token, nil

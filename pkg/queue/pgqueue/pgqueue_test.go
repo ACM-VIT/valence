@@ -10,15 +10,24 @@ import (
 	"github.com/ACM-VIT/valence/pkg/queue/queuetest"
 )
 
+// TestConformance uses a one-connection pool: idle Lease calls must not hold
+// it, or Enqueue could never insert the job that wakes them.
 func TestConformance(t *testing.T) {
 	url := os.Getenv("DATABASE_URL")
 	if url == "" {
 		t.Skip("DATABASE_URL not set")
 	}
-	pool, err := pgxpool.New(context.Background(), url)
+	cfg, err := pgxpool.ParseConfig(url)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.MaxConns = 1
+	pool, err := pgxpool.NewWithConfig(context.Background(), cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(pool.Close)
-	queuetest.Run(t, New(pool))
+	q := New(pool)
+	t.Cleanup(q.Close)
+	queuetest.Run(t, q)
 }

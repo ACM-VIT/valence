@@ -41,9 +41,13 @@ Allowed changes, enforced by `CanTransition` in
 - `→ retryable_error` or `→ finalized` from any state except `queued`.
 - Nothing leaves `finalized`.
 
-Every change also names the status it expects to move *from*. If the
-attempt is no longer in that status (another worker took over), the
-change is refused, so two workers never write to the same attempt.
+Every change also names the status it expects to move *from* and carries
+the worker's queue lease token. Moving to `leased` records the token on
+the attempt; every later change, including finalizing, must carry the same
+token. The expected status alone isn't enough: a worker whose lease expired
+can wake up when its replacement has reached that same status again. The
+token check refuses it, so only the current lease holder writes to an
+attempt. A `queued` attempt has no token, so it can't be finalized.
 
 ## Verdicts
 

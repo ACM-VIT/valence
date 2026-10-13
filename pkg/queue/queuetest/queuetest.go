@@ -24,6 +24,9 @@ func Run(t *testing.T, q queue.Queue) {
 	t.Run("Dedupe", func(t *testing.T) { testDedupe(t, q) })
 	t.Run("OnlyRequestedKinds", func(t *testing.T) { testKinds(t, q) })
 	t.Run("WakesOnEnqueue", func(t *testing.T) { testWakes(t, q) })
+	t.Run("PriorityRange", func(t *testing.T) { testPriorityRange(t, q) })
+	t.Run("NeedsCurrentLease", func(t *testing.T) { testNeedsCurrentLease(t, q) })
+	t.Run("PayloadIsCopied", func(t *testing.T) { testPayloadCopied(t, q) })
 }
 
 func kind() string { return "test-" + rand.Text()[:8] }
@@ -255,5 +258,95 @@ func testWakes(t *testing.T, q queue.Queue) {
 	// Far less than any polling interval: the insert woke the worker.
 	if d := time.Since(start); d > time.Second {
 		t.Errorf("idle worker took %v to see a new job", d)
+	}
+}
+
+func testPriorityRange(t *testing.T, q queue.Queue) {
+	k := kind()
+	for _, p := range []int{queue.MinPriority - 1, queue.MaxPriority + 1} {
+		if _, err := q.Enqueue(context.Background(), queue.Job{Kind: k, Priority: p}); !errors.Is(err, queue.ErrBadPriority) {
+			t.Errorf("priority %d: got %v, want ErrBadPriority", p, err)
+		}
+	}
+	empty(t, q, k)
+
+	// The extremes are allowed and keep their order.
+	low := enqueue(t, q, queue.Job{Kind: k, Priority: queue.MinPriority})
+	high := enqueue(t, q, queue.Job{Kind: k, Priority: queue.MaxPriority})
+	for _, want := range []string{high, low} {
+		l := lease(t, q, k, time.Minute)
+		if l.Job.ID != want {
+			t.Fatalf("leased %s (priority %d), want %s", l.Job.ID, l.Job.Priority, want)
+		}
+		if err := q.Ack(context.Background(), l); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+// testNeedsCurrentLease checks that a lease without a token, built from the ID
+// Enqueue returned, owns nothing, whether the job was never leased or was
+// just nacked.
+func testNeedsCurrentLease(t *testing.T, q queue.Queue) {
+	ctx := context.Background()
+	k := kind()
+	id := enqueue(t, q, queue.Job{Kind: k})
+	bare := queue.Lease{Job: queue.Job{ID: id, Kind: k}}
+
+	check := func(when string) {
+		t.Helper()
+		if _, err := q.Heartbeat(ctx, bare, time.Minute); !errors.Is(err, queue.ErrLeaseLost) {
+			t.Errorf("%s: heartbeat without token: %v, want ErrLeaseLost", when, err)
+		}
+		if err := q.Nack(ctx, bare, 0); !errors.Is(err, queue.ErrLeaseLost) {
+			t.Errorf("%s: nack without token: %v, want ErrLeaseLost", when, err)
+		}
+		if err := q.Ack(ctx, bare); !errors.Is(err, queue.ErrLeaseLost) {
+			t.Errorf("%s: ack without token: %v, want ErrLeaseLost", when, err)
+		}
+	}
+	check("unleased")
+
+	l := lease(t, q, k, time.Minute)
+	if err := q.Nack(ctx, l, 0); err != nil {
+		t.Fatal(err)
+	}
+	check("just nacked")
+	if err := q.Ack(ctx, l); !errors.Is(err, queue.ErrLeaseLost) {
+		t.Errorf("ack on nacked lease: %v, want ErrLeaseLost", err)
+	}
+
+	// The job is still there for a real lease.
+	l = lease(t, q, k, time.Minute)
+	if l.Job.ID != id {
+		t.Fatalf("leased %s, want %s", l.Job.ID, id)
+	}
+	if err := q.Ack(ctx, l); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func testPayloadCopied(t *testing.T, q queue.Queue) {
+	ctx := context.Background()
+	k := kind()
+	buf := []byte("first")
+	enqueue(t, q, queue.Job{Kind: k, Payload: buf})
+	copy(buf, "XXXXX") // the producer reuses its buffer
+
+	l := lease(t, q, k, time.Minute)
+	if string(l.Job.Payload) != "first" {
+		t.Fatalf("payload %q after the producer reused its buffer, want %q", l.Job.Payload, "first")
+	}
+	copy(l.Job.Payload, "YYYYY") // the worker scribbles on its copy
+	if err := q.Nack(ctx, l, 0); err != nil {
+		t.Fatal(err)
+	}
+
+	again := lease(t, q, k, time.Minute)
+	if string(again.Job.Payload) != "first" {
+		t.Fatalf("retry got payload %q, want %q", again.Job.Payload, "first")
+	}
+	if err := q.Ack(ctx, again); err != nil {
+		t.Fatal(err)
 	}
 }
