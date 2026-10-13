@@ -11,8 +11,8 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/AdityaVKochar/valence/pkg/server"
-	"github.com/AdityaVKochar/valence/pkg/version"
+	"github.com/ACM-VIT/valence/pkg/server"
+	"github.com/ACM-VIT/valence/pkg/version"
 )
 
 func main() {

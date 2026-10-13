@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/AdityaVKochar/valence/pkg/blob"
+	"github.com/ACM-VIT/valence/pkg/blob"
 )
 
 type Verdict string

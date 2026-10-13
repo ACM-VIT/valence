@@ -11,8 +11,13 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/AdityaVKochar/valence/pkg/server"
-	"github.com/AdityaVKochar/valence/pkg/version"
+	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/ACM-VIT/valence/pkg/config"
+	"github.com/ACM-VIT/valence/pkg/server"
+	"github.com/ACM-VIT/valence/pkg/session"
+	"github.com/ACM-VIT/valence/pkg/version"
+	"github.com/ACM-VIT/valence/services/api/internal/auth"
 )
 
 func main() {
@@ -32,14 +37,74 @@ func run() error {
 		return nil
 	}
 
+	cfg, err := config.Load()
+	if err != nil {
+		return fmt.Errorf("config: %w", err)
+	}
+
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	mux := http.NewServeMux()
-	server.Health(mux, nil)
+	pool, err := pgxpool.New(ctx, cfg.DatabaseURL)
+	if err != nil {
+		return fmt.Errorf("database: %w", err)
+	}
+	defer pool.Close()
+	if err := pool.Ping(ctx); err != nil {
+		return fmt.Errorf("database: %w", err)
+	}
 
-	slog.Info("API starting", "version", version.String())
+	mux := http.NewServeMux()
+	server.Health(mux, pool.Ping)
+
+	store := session.NewPostgresStore(pool)
+	go pruneSessions(ctx, store, time.Hour)
+	sessions := auth.NewSessions(store, cfg)
+	mux.HandleFunc("GET /auth/me", sessions.Me)
+	mux.HandleFunc("POST /auth/logout", sessions.Logout)
+
+	users := auth.NewUsers(pool)
+
+	if cfg.GitHubEnabled() {
+		gh := auth.NewGithub(cfg, users, sessions)
+		mux.HandleFunc("GET /auth/github/login", gh.Login)
+		mux.HandleFunc("GET /auth/github/callback", gh.Callback)
+	}
+
+	if cfg.GoogleEnabled() {
+		gg := auth.NewGoogle(cfg, users, sessions)
+		mux.HandleFunc("GET /auth/google/login", gg.Login)
+		mux.HandleFunc("GET /auth/google/callback", gg.Callback)
+	}
+
+	slog.Info("API starting",
+		"version", version.String(),
+		"env", cfg.Env,
+		"github_login", cfg.GitHubEnabled(),
+		"google_login", cfg.GoogleEnabled(),
+	)
 	return server.Run(ctx, *addr, mux, 15*time.Second)
+}
+
+// pruneSessions deletes expired sessions every interval until ctx is cancelled.
+func pruneSessions(ctx context.Context, store *session.PostgresStore, every time.Duration) {
+	t := time.NewTicker(every)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			n, err := store.DeleteExpired(ctx)
+			if err != nil {
+				slog.Warn("pruning expired sessions failed", "err", err)
+				continue
+			}
+			if n > 0 {
+				slog.Info("pruned expired sessions", "count", n)
+			}
+		}
+	}
 }
 
 func envOr(key, fallback string) string {

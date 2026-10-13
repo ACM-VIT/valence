@@ -1,13 +1,13 @@
 # Valence
 
-Valence is ACMVIT's in-house competitive programming platform. It runs contests and practice with sandboxed judging, a browser-based editor, live leaderboards and optional proctoring. Nearly every feature is configurable at the global, contest, problem and language level.
+Valence is ACM-VIT's in-house competitive programming platform. It runs contests and practice with sandboxed judging, a browser-based editor, live leaderboards and optional proctoring. Nearly every feature is configurable at the global, contest, problem and language level.
 
 
 ## Getting started
 
 ### Prerequisites
 
-- [Go](https://go.dev/dl/) 1.25 or newer
+- [Go](https://go.dev/dl/) 1.26 or newer
 - [Node.js](https://nodejs.org/) 22 or newer and [pnpm](https://pnpm.io/installation) 10
 - [Docker](https://docs.docker.com/get-docker/), for Postgres
 - [goose](https://github.com/pressly/goose), for database migrations: `go install github.com/pressly/goose/v3/cmd/goose@latest`
@@ -15,7 +15,7 @@ Valence is ACMVIT's in-house competitive programming platform. It runs contests 
 ### 1. Clone and install
 
 ```bash
-git clone https://github.com/AdityaVKochar/valence.git
+git clone https://github.com/ACM-VIT/valence.git
 cd valence
 pnpm install
 go mod download
