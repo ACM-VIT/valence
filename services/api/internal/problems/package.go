@@ -226,10 +226,13 @@ func loadTests(dir string, fail func(string, ...any)) []TestFiles {
 // endings and a final newline. Samples go out as protobuf strings, which
 // must be valid UTF-8. It returns "" when the file is fine.
 func checkTestText(path string) string {
-	b, err := os.ReadFile(path)
+	// Bounded, in case the file grew since its size was checked.
+	b, err := readAtMost(path, maxTestFileBytes)
 	switch {
 	case err != nil:
 		return err.Error()
+	case len(b) > maxTestFileBytes:
+		return "larger than 64 MiB"
 	case len(b) == 0:
 		return ""
 	case !utf8.Valid(b):

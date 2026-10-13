@@ -3,6 +3,7 @@ package problems
 import (
 	"context"
 	"crypto/rand"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -16,11 +17,24 @@ import (
 
 func TestPutFileRejectsLinksAndHugeFiles(t *testing.T) {
 	ctx := context.Background()
-	blobs, err := blob.NewLocal(t.TempDir())
+	root := t.TempDir()
+	blobs, err := blob.NewLocal(root)
 	if err != nil {
 		t.Fatal(err)
 	}
 	dir := t.TempDir()
+
+	// files counts what's in the blob store, temp files included.
+	files := func() int {
+		n := 0
+		filepath.WalkDir(root, func(_ string, d os.DirEntry, err error) error {
+			if err == nil && !d.IsDir() {
+				n++
+			}
+			return nil
+		})
+		return n
+	}
 
 	link := filepath.Join(dir, "01.in")
 	if err := os.Symlink("/dev/zero", link); err != nil {
@@ -30,7 +44,8 @@ func TestPutFileRejectsLinksAndHugeFiles(t *testing.T) {
 		t.Errorf("symlink to /dev/zero: got %v, want a not-a-regular-file error", err)
 	}
 
-	// A file that grew past the limit after validation: copying stops there.
+	// A file that grew past the limit after validation: copying fails there
+	// and nothing is kept, not even a partial copy or a temp file.
 	big := filepath.Join(dir, "02.in")
 	f, err := os.Create(big)
 	if err != nil {
@@ -40,8 +55,16 @@ func TestPutFileRejectsLinksAndHugeFiles(t *testing.T) {
 		t.Fatal(err)
 	}
 	f.Close()
-	if _, _, err := putFile(ctx, blobs, big); err == nil || !strings.Contains(err.Error(), "larger than 64 MiB") {
-		t.Errorf("file over the limit: got %v, want a size error", err)
+	if _, _, err := putFile(ctx, blobs, big); !errors.Is(err, errTestTooLarge) {
+		t.Errorf("file over the limit: got %v, want errTestTooLarge", err)
+	}
+	if n := files(); n != 0 {
+		t.Errorf("blob store has %d files after a rejected put, want 0", n)
+	}
+
+	// The text check during validation is bounded the same way.
+	if msg := checkTestText(big); msg != "larger than 64 MiB" {
+		t.Errorf("checkTestText on an oversized file = %q, want the size error", msg)
 	}
 
 	ok := filepath.Join(dir, "03.in")
