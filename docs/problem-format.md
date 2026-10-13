@@ -41,7 +41,7 @@ samples: [1, 2]
 | `time_limit_ms` | no | Integer, 100 to 20000. Per test, wall clock of the solution process. | `1000` |
 | `memory_limit_mb` | no | Integer, 16 to 2048. Stored as KiB (`memory_limit_mb * 1024`), so 16384 to 2097152 KiB. | `256` |
 | `checker` | no | `exact`, `tokens` or `float:EPS`. `custom` is reserved for V-219 and rejected in v0. | `tokens` |
-| `samples` | no | List of test numbers shown on the problem page. Each must name an existing test; no duplicates. | `[]` |
+| `samples` | no | List of test numbers shown on the problem page. Each must name an existing test; no duplicates. Each sample file must be at most 64 KiB | `[]` |
 
 Unknown keys are errors. A misspelled `time_limt_ms` should fail the import,
 not quietly fall back to the default.

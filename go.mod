@@ -3,10 +3,12 @@ module github.com/ACM-VIT/valence
 go 1.26.0
 
 require (
+	connectrpc.com/connect v1.18.1
 	github.com/caarlos0/env/v11 v11.4.1
 	github.com/jackc/pgx/v5 v5.11.0
 	go.yaml.in/yaml/v3 v3.0.4
 	golang.org/x/oauth2 v0.37.0
+	google.golang.org/protobuf v1.36.9
 )
 
 require (

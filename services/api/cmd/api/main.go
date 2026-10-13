@@ -13,11 +13,15 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/ACM-VIT/valence/gen/go/db"
+	"github.com/ACM-VIT/valence/gen/go/valence/v1/valencev1connect"
+	"github.com/ACM-VIT/valence/pkg/blob"
 	"github.com/ACM-VIT/valence/pkg/config"
 	"github.com/ACM-VIT/valence/pkg/server"
 	"github.com/ACM-VIT/valence/pkg/session"
 	"github.com/ACM-VIT/valence/pkg/version"
 	"github.com/ACM-VIT/valence/services/api/internal/auth"
+	"github.com/ACM-VIT/valence/services/api/internal/problems"
 )
 
 func main() {
@@ -77,6 +81,12 @@ func run() error {
 		mux.HandleFunc("GET /auth/google/login", gg.Login)
 		mux.HandleFunc("GET /auth/google/callback", gg.Callback)
 	}
+
+	blobs, err := blob.NewLocal(cfg.BlobDir)
+	if err != nil {
+		return fmt.Errorf("blob store: %w", err)
+	}
+	mux.Handle(valencev1connect.NewProblemServiceHandler(problems.NewService(db.New(pool), blobs)))
 
 	slog.Info("API starting",
 		"version", version.String(),

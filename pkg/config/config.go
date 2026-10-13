@@ -24,6 +24,8 @@ type Config struct {
 	GoogleClientID       string   `env:"GOOGLE_CLIENT_ID"`
 	GoogleClientSecret   string   `env:"GOOGLE_CLIENT_SECRET"`
 	GoogleAllowedDomains []string `env:"GOOGLE_ALLOWED_DOMAINS" envSeparator:","`
+
+	BlobDir string `env:"BLOB_DIR" envDefault:".data/blobs"`
 }
 
 func Load() (Config, error) {

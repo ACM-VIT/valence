@@ -18,3 +18,9 @@ validate: ## Check every example problem package without touching the database
 .PHONY: seed
 seed: ## Import every example problem into DATABASE_URL and the blob store (BLOB_DIR, default .data/blobs)
 	$(LOAD_ENV); go run ./services/api/cmd/valence-admin problem import $(PROBLEMS)
+
+.PHONY: gen
+gen: ## Regenerate protobuf and sqlc code
+	go tool -modfile=tools/go.mod buf lint
+	go tool -modfile=tools/go.mod buf generate
+	sqlc generate

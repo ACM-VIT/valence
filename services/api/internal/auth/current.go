@@ -61,3 +61,7 @@ func writeAuthError(w http.ResponseWriter, err error) {
 		http.Error(w, "Something went wrong.", http.StatusInternalServerError)
 	}
 }
+
+func NewContext(ctx context.Context, u User) context.Context {
+	return withUser(ctx, u)
+}

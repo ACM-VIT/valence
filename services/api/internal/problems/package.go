@@ -45,6 +45,7 @@ type manifest struct {
 const (
 	maxStatementBytes = 256 << 10
 	maxTestFileBytes  = 64 << 20
+	maxSampleBytes    = 64 << 10
 )
 
 var (
@@ -113,6 +114,11 @@ func Load(dir string) (*Package, error) {
 		default:
 			seen[s] = true
 			tests[s-1].Sample = true
+			for _, f := range []string{tests[s-1].In, tests[s-1].Out} {
+				if info, err := os.Stat(f); err == nil && info.Size() > maxSampleBytes {
+					fail("tests/%s: samples should be at most 64 KiB", filepath.Base(f))
+				}
+			}
 		}
 	}
 

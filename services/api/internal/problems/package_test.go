@@ -63,3 +63,17 @@ func TestLoadReportsEveryError(t *testing.T) {
 		}
 	}
 }
+
+func TestLoadRejectsHugeSamples(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.CopyFS(dir, os.DirFS("../../../../problems/examples/aplusb")); err != nil {
+		t.Fatal(err)
+	}
+	big := strings.Repeat("1 ", 40<<10) // 80 KiB
+	if err := os.WriteFile(filepath.Join(dir, "tests", "01.in"), []byte(big), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Load(dir); err == nil || !strings.Contains(err.Error(), "64 KiB") {
+		t.Fatalf("got %v, want an error about the 64 KiB sample limit", err)
+	}
+}
