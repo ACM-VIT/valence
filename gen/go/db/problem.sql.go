@@ -198,6 +198,17 @@ func (q *Queries) ListTests(ctx context.Context, problemID int64) ([]Test, error
 	return items, nil
 }
 
+const lockProblem = `-- name: LockProblem :one
+SELECT id FROM problems WHERE id = $1 FOR UPDATE
+`
+
+// Serialises writers of one problem's tests until the transaction ends.
+func (q *Queries) LockProblem(ctx context.Context, id int64) (int64, error) {
+	row := q.db.QueryRow(ctx, lockProblem, id)
+	err := row.Scan(&id)
+	return id, err
+}
+
 const updateProblem = `-- name: UpdateProblem :one
 UPDATE problems
 SET title = $2, statement_md = $3, time_limit_ms = $4, memory_limit_kib = $5, checker = $6,

@@ -25,7 +25,11 @@ func (s *Store) ReplaceTests(ctx context.Context, problemID int64, tests []db.In
 }
 
 func replaceTests(ctx context.Context, q *db.Queries, problemID int64, tests []db.InsertTestsParams) error {
-
+	// Lock the problem first, so concurrent replacements run one at a
+	// time instead of interleaving their deletes and inserts.
+	if _, err := q.LockProblem(ctx, problemID); err != nil {
+		return err
+	}
 	if err := q.DeleteTests(ctx, problemID); err != nil {
 		return err
 	}
@@ -59,6 +63,14 @@ func (s *Store) Upsert(ctx context.Context, p db.CreateProblemParams, tests []db
 			return replaceTests(ctx, q, id, tests)
 		}
 		if err != nil {
+			return err
+		}
+		// Lock, then read again: a concurrent import may have changed the
+		// problem between the first read and the lock.
+		if _, err := q.LockProblem(ctx, old.ID); err != nil {
+			return err
+		}
+		if old, err = q.GetProblemBySlug(ctx, p.Slug); err != nil {
 			return err
 		}
 
