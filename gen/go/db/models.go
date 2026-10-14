@@ -264,21 +264,22 @@ type Submission struct {
 }
 
 type SubmissionAttempt struct {
-	SubmissionID  int64
-	Attempt       int32
-	Status        SubmissionStatus
-	Verdict       NullVerdict
-	TimeMs        *int32
-	MemoryKib     *int32
-	CompileOutput *string
-	Provider      *string
-	Worker        *string
-	InfraRetries  int32
-	LastError     *string
-	CreatedAt     time.Time
-	StartedAt     *time.Time
-	FinishedAt    *time.Time
-	LeaseToken    *string
+	SubmissionID    int64
+	Attempt         int32
+	Status          SubmissionStatus
+	Verdict         NullVerdict
+	TimeMs          *int32
+	MemoryKib       *int32
+	CompileOutput   *string
+	Provider        *string
+	Worker          *string
+	InfraRetries    int32
+	LastError       *string
+	CreatedAt       time.Time
+	StartedAt       *time.Time
+	FinishedAt      *time.Time
+	LeaseToken      *string
+	LeaseGeneration *int32
 }
 
 type Test struct {

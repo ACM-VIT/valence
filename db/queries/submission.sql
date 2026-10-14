@@ -23,13 +23,16 @@ ORDER BY id desc
 LIMIT sqlc.arg(page_size);
 
 -- name: ClaimAttempt :execrows
--- Moves the attempt to 'leased' for the worker holding lease_token.
+-- Moves the attempt to 'leased' for the worker holding lease_token. A claim
+-- from an older queue lease than the one that last claimed it is refused.
 UPDATE submission_attempts
 SET status = 'leased', lease_token = sqlc.arg(lease_token)::text,
+    lease_generation = sqlc.arg(lease_generation)::integer,
     started_at = COALESCE(started_at, now())
 WHERE submission_id = sqlc.arg(submission_id)
     AND attempt = sqlc.arg(attempt)
-    AND status = sqlc.arg(from_status);
+    AND status = sqlc.arg(from_status)
+    AND (lease_generation IS NULL OR lease_generation < sqlc.arg(lease_generation)::integer);
 
 -- name: SetAttemptStatus :execrows
 UPDATE submission_attempts

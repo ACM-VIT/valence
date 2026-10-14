@@ -13,23 +13,28 @@ import (
 const claimAttempt = `-- name: ClaimAttempt :execrows
 UPDATE submission_attempts
 SET status = 'leased', lease_token = $1::text,
+    lease_generation = $2::integer,
     started_at = COALESCE(started_at, now())
-WHERE submission_id = $2
-    AND attempt = $3
-    AND status = $4
+WHERE submission_id = $3
+    AND attempt = $4
+    AND status = $5
+    AND (lease_generation IS NULL OR lease_generation < $2::integer)
 `
 
 type ClaimAttemptParams struct {
-	LeaseToken   string
-	SubmissionID int64
-	Attempt      int32
-	FromStatus   SubmissionStatus
+	LeaseToken      string
+	LeaseGeneration int32
+	SubmissionID    int64
+	Attempt         int32
+	FromStatus      SubmissionStatus
 }
 
-// Moves the attempt to 'leased' for the worker holding lease_token.
+// Moves the attempt to 'leased' for the worker holding lease_token. A claim
+// from an older queue lease than the one that last claimed it is refused.
 func (q *Queries) ClaimAttempt(ctx context.Context, arg ClaimAttemptParams) (int64, error) {
 	result, err := q.db.Exec(ctx, claimAttempt,
 		arg.LeaseToken,
+		arg.LeaseGeneration,
 		arg.SubmissionID,
 		arg.Attempt,
 		arg.FromStatus,
@@ -147,7 +152,7 @@ func (q *Queries) FinalizeSubmission(ctx context.Context, arg FinalizeSubmission
 }
 
 const getAttempt = `-- name: GetAttempt :one
-SELECT submission_id, attempt, status, verdict, time_ms, memory_kib, compile_output, provider, worker, infra_retries, last_error, created_at, started_at, finished_at, lease_token FROM submission_attempts WHERE submission_id = $1 AND attempt = $2
+SELECT submission_id, attempt, status, verdict, time_ms, memory_kib, compile_output, provider, worker, infra_retries, last_error, created_at, started_at, finished_at, lease_token, lease_generation FROM submission_attempts WHERE submission_id = $1 AND attempt = $2
 `
 
 type GetAttemptParams struct {
@@ -174,6 +179,7 @@ func (q *Queries) GetAttempt(ctx context.Context, arg GetAttemptParams) (Submiss
 		&i.StartedAt,
 		&i.FinishedAt,
 		&i.LeaseToken,
+		&i.LeaseGeneration,
 	)
 	return i, err
 }

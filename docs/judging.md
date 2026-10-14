@@ -49,6 +49,11 @@ can wake up when its replacement has reached that same status again. The
 token check refuses it, so only the current lease holder writes to an
 attempt. A `queued` attempt has no token, so it can't be finalized.
 
+Moving to `leased` (a claim) also records the queue lease's attempt number,
+which only grows. A claim whose number isn't higher than the last one is
+refused, so a claim from an expired lease that arrives late can't take the
+attempt back from the worker that replaced it.
+
 ## Verdicts
 
 | Verdict | Meaning |

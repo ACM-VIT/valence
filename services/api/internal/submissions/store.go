@@ -25,12 +25,40 @@ func NewStore(pool *pgxpool.Pool) *Store {
 	return &Store{pool: pool}
 }
 
-// SetStatus moves an attempt from one status to another for the worker
-// holding the queue lease token. Moving to leased records the token; every
-// other change, and Finalize, must carry the same token, so a worker whose
-// lease expired can't write over its replacement.
+// Claim moves an attempt to leased for the worker holding a queue lease and
+// records the lease's token and generation (queue.Lease.Attempt, which only
+// grows). A claim with a generation no newer than the last claim is refused
+// with ErrStale, so a delayed claim from an expired lease can't take the
+// attempt back from the worker that replaced it.
+func (s *Store) Claim(ctx context.Context, id int64, attempt int32, token string, generation int32, from db.SubmissionStatus) error {
+	if !CanTransition(from, db.SubmissionStatusLeased) {
+		return fmt.Errorf("%w: %s -> %s", ErrBadTransition, from, db.SubmissionStatusLeased)
+	}
+	if token == "" || generation < 1 {
+		return ErrNoLease
+	}
+	return pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
+		q := db.New(tx)
+		n, err := q.ClaimAttempt(ctx, db.ClaimAttemptParams{
+			SubmissionID: id, Attempt: attempt, FromStatus: from, LeaseToken: token, LeaseGeneration: generation,
+		})
+		if err != nil {
+			return err
+		}
+		if n == 0 {
+			return ErrStale
+		}
+		return q.SetSubmissionStatus(ctx, db.SetSubmissionStatusParams{
+			ID: id, Attempt: attempt, Status: db.SubmissionStatusLeased,
+		})
+	})
+}
+
+// SetStatus moves a claimed attempt from one status to another. It must
+// carry the token recorded by Claim, as must Finalize, so a worker whose
+// lease expired can't write over its replacement. Use Claim to move to leased.
 func (s *Store) SetStatus(ctx context.Context, id int64, attempt int32, token string, from, to db.SubmissionStatus, currentTest *int32) error {
-	if to == db.SubmissionStatusFinalized || !CanTransition(from, to) {
+	if to == db.SubmissionStatusFinalized || to == db.SubmissionStatusLeased || !CanTransition(from, to) {
 		return fmt.Errorf("%w: %s -> %s", ErrBadTransition, from, to)
 	}
 	if token == "" {
@@ -38,17 +66,9 @@ func (s *Store) SetStatus(ctx context.Context, id int64, attempt int32, token st
 	}
 	return pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
 		q := db.New(tx)
-		var n int64
-		var err error
-		if to == db.SubmissionStatusLeased {
-			n, err = q.ClaimAttempt(ctx, db.ClaimAttemptParams{
-				SubmissionID: id, Attempt: attempt, FromStatus: from, LeaseToken: token,
-			})
-		} else {
-			n, err = q.SetAttemptStatus(ctx, db.SetAttemptStatusParams{
-				SubmissionID: id, Attempt: attempt, FromStatus: from, ToStatus: to, LeaseToken: token,
-			})
-		}
+		n, err := q.SetAttemptStatus(ctx, db.SetAttemptStatusParams{
+			SubmissionID: id, Attempt: attempt, FromStatus: from, ToStatus: to, LeaseToken: token,
+		})
 		if err != nil {
 			return err
 		}

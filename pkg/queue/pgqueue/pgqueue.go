@@ -3,6 +3,8 @@ package pgqueue
 import (
 	"context"
 	"errors"
+	"fmt"
+	"log/slog"
 	"strconv"
 	"sync"
 	"time"
@@ -30,6 +32,7 @@ type Queue struct {
 	pool *pgxpool.Pool
 	q    *db.Queries
 	poll time.Duration
+	log  *slog.Logger
 
 	start sync.Once
 	ctx   context.Context // cancelled by Close
@@ -43,7 +46,7 @@ type Queue struct {
 func New(pool *pgxpool.Pool) *Queue {
 	ctx, stop := context.WithCancel(context.Background())
 	return &Queue{
-		pool: pool, q: db.New(pool), poll: pollInterval,
+		pool: pool, q: db.New(pool), poll: pollInterval, log: slog.Default(),
 		ctx: ctx, stop: stop, done: make(chan struct{}),
 		wake: make(chan struct{}),
 	}
@@ -123,11 +126,18 @@ func (q *Queue) broadcast() {
 	q.wake = make(chan struct{})
 }
 
-// listen keeps one LISTEN connection open until Close, reconnecting after errors.
+// listen keeps one LISTEN connection open until Close, reconnecting after
+// errors. Failures are logged, since until it reconnects idle workers only
+// find new jobs on the slower poll.
 func (q *Queue) listen() {
 	defer close(q.done)
 	for {
-		q.listenOnce()
+		err := q.listenOnce()
+		if q.ctx.Err() != nil {
+			return
+		}
+		q.log.Warn("queue listener failed; idle workers fall back to polling until it reconnects",
+			"err", err, "retry_in", listenBackoff, "poll", q.poll)
 		select {
 		case <-q.ctx.Done():
 			return
@@ -136,20 +146,20 @@ func (q *Queue) listen() {
 	}
 }
 
-func (q *Queue) listenOnce() {
+func (q *Queue) listenOnce() error {
 	conn, err := pgx.ConnectConfig(q.ctx, q.pool.Config().ConnConfig)
 	if err != nil {
-		return
+		return fmt.Errorf("connect: %w", err)
 	}
 	defer conn.Close(context.Background())
 	if _, err := conn.Exec(q.ctx, "LISTEN jobs"); err != nil {
-		return
+		return fmt.Errorf("LISTEN: %w", err)
 	}
 	// Jobs may have arrived while we weren't listening.
 	q.broadcast()
 	for {
 		if _, err := conn.WaitForNotification(q.ctx); err != nil {
-			return
+			return fmt.Errorf("wait for notification: %w", err)
 		}
 		q.broadcast()
 	}

@@ -72,11 +72,13 @@ func TestJudgingLifecycle(t *testing.T) {
 	const tok = "lease-a" // the worker's queue lease token
 
 	// A worker takes the job and judges test 1, then test 2.
+	if err := s.Claim(ctx, id, 1, tok, 1, db.SubmissionStatusQueued); err != nil {
+		t.Fatalf("claim: %v", err)
+	}
 	steps := []struct {
 		from, to db.SubmissionStatus
 		test     *int32
 	}{
-		{db.SubmissionStatusQueued, db.SubmissionStatusLeased, nil},
 		{db.SubmissionStatusLeased, db.SubmissionStatusCompiling, nil},
 		{db.SubmissionStatusCompiling, db.SubmissionStatusRunning, ptr[int32](1)},
 		{db.SubmissionStatusRunning, db.SubmissionStatusChecking, ptr[int32](1)},
@@ -126,8 +128,12 @@ func TestJudgingLifecycle(t *testing.T) {
 	}
 
 	// Finalized is the end.
-	if err := s.SetStatus(ctx, id, 1, tok, db.SubmissionStatusFinalized, db.SubmissionStatusLeased, nil); !errors.Is(err, ErrBadTransition) {
+	if err := s.Claim(ctx, id, 1, "lease-z", 9, db.SubmissionStatusFinalized); !errors.Is(err, ErrBadTransition) {
 		t.Errorf("finalized → leased: got %v, want ErrBadTransition", err)
+	}
+	// And leased is only reached through Claim, which records the generation.
+	if err := s.SetStatus(ctx, id, 1, tok, db.SubmissionStatusRunning, db.SubmissionStatusLeased, nil); !errors.Is(err, ErrBadTransition) {
+		t.Errorf("SetStatus to leased: got %v, want ErrBadTransition", err)
 	}
 }
 
@@ -145,7 +151,13 @@ func TestFinalizeNeedsLease(t *testing.T) {
 	if _, err := s.Finalize(ctx, id, 1, "", ac); !errors.Is(err, ErrNoLease) {
 		t.Errorf("Finalize without token: got %v, want ErrNoLease", err)
 	}
-	if err := s.SetStatus(ctx, id, 1, "", db.SubmissionStatusQueued, db.SubmissionStatusLeased, nil); !errors.Is(err, ErrNoLease) {
+	if err := s.Claim(ctx, id, 1, "", 1, db.SubmissionStatusQueued); !errors.Is(err, ErrNoLease) {
+		t.Errorf("Claim without token: got %v, want ErrNoLease", err)
+	}
+	if err := s.Claim(ctx, id, 1, "lease-a", 0, db.SubmissionStatusQueued); !errors.Is(err, ErrNoLease) {
+		t.Errorf("Claim without generation: got %v, want ErrNoLease", err)
+	}
+	if err := s.SetStatus(ctx, id, 1, "", db.SubmissionStatusLeased, db.SubmissionStatusCompiling, nil); !errors.Is(err, ErrNoLease) {
 		t.Errorf("SetStatus without token: got %v, want ErrNoLease", err)
 	}
 
@@ -171,11 +183,11 @@ func TestOldWorkerLosesAttempt(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	must(s.SetStatus(ctx, id, 1, "lease-a", db.SubmissionStatusQueued, db.SubmissionStatusLeased, nil))
+	must(s.Claim(ctx, id, 1, "lease-a", 1, db.SubmissionStatusQueued))
 	must(s.SetStatus(ctx, id, 1, "lease-a", db.SubmissionStatusLeased, db.SubmissionStatusCompiling, nil))
 
-	// Worker B takes over and gets back to compiling.
-	must(s.SetStatus(ctx, id, 1, "lease-b", db.SubmissionStatusCompiling, db.SubmissionStatusLeased, nil))
+	// Worker B takes over (queue lease attempt 2) and gets back to compiling.
+	must(s.Claim(ctx, id, 1, "lease-b", 2, db.SubmissionStatusCompiling))
 	must(s.SetStatus(ctx, id, 1, "lease-b", db.SubmissionStatusLeased, db.SubmissionStatusCompiling, nil))
 
 	// A wakes up. The status matches what it expects, but the lease is B's.
@@ -195,6 +207,47 @@ func TestOldWorkerLosesAttempt(t *testing.T) {
 	sub, _ := q.GetSubmission(ctx, id)
 	if !sub.Verdict.Valid || sub.Verdict.Verdict != db.VerdictWA {
 		t.Fatalf("verdict %+v, want WA", sub.Verdict)
+	}
+}
+
+// A claim from an expired lease that arrives late must not take the attempt
+// back from the worker that replaced it, even when the status it expects
+// matches again.
+func TestDelayedClaimFromOldLease(t *testing.T) {
+	pool, userID, problemID := setup(t)
+	ctx := context.Background()
+	s, q := NewStore(pool), db.New(pool)
+	id := submit(t, q, userID, problemID)
+	must := func(err error) {
+		t.Helper()
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// Worker A (lease attempt 1) gets to running, then its lease expires.
+	must(s.Claim(ctx, id, 1, "lease-a", 1, db.SubmissionStatusQueued))
+	must(s.SetStatus(ctx, id, 1, "lease-a", db.SubmissionStatusLeased, db.SubmissionStatusCompiling, nil))
+	must(s.SetStatus(ctx, id, 1, "lease-a", db.SubmissionStatusCompiling, db.SubmissionStatusRunning, ptr[int32](1)))
+
+	// Worker B (lease attempt 2) takes over from running and gets back to running.
+	must(s.Claim(ctx, id, 1, "lease-b", 2, db.SubmissionStatusRunning))
+	must(s.SetStatus(ctx, id, 1, "lease-b", db.SubmissionStatusLeased, db.SubmissionStatusCompiling, nil))
+	must(s.SetStatus(ctx, id, 1, "lease-b", db.SubmissionStatusCompiling, db.SubmissionStatusRunning, ptr[int32](1)))
+
+	// A's delayed re-claim from running arrives now. Status alone would let it in.
+	if err := s.Claim(ctx, id, 1, "lease-a", 1, db.SubmissionStatusRunning); !errors.Is(err, ErrStale) {
+		t.Fatalf("delayed claim from lease attempt 1: got %v, want ErrStale", err)
+	}
+	a, _ := q.GetAttempt(ctx, db.GetAttemptParams{SubmissionID: id, Attempt: 1})
+	if a.Status != db.SubmissionStatusRunning || a.LeaseToken == nil || *a.LeaseToken != "lease-b" {
+		t.Fatalf("attempt is %s with token %v, want running with lease-b", a.Status, a.LeaseToken)
+	}
+
+	// B keeps working and its verdict counts.
+	wa := Result{Verdict: db.VerdictWA, Tests: []TestResult{{Ordinal: 1, Verdict: db.VerdictWA}}}
+	if done, err := s.Finalize(ctx, id, 1, "lease-b", wa); err != nil || !done {
+		t.Fatalf("current worker Finalize = %v, %v; want true, nil", done, err)
 	}
 }
 
