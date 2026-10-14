@@ -3,10 +3,29 @@ package queue
 import (
 	"context"
 	"errors"
+	"fmt"
+	"math"
 	"time"
 )
 
-var ErrLeaseLost = errors.New("queue: lease lost")
+var (
+	ErrLeaseLost   = errors.New("queue: lease lost")
+	ErrBadPriority = errors.New("queue: priority out of range")
+)
+
+// Priorities fit in a Postgres smallint, so every queue orders them the same.
+const (
+	MinPriority = math.MinInt16
+	MaxPriority = math.MaxInt16
+)
+
+// CheckPriority returns ErrBadPriority if p is outside [MinPriority, MaxPriority].
+func CheckPriority(p int) error {
+	if p < MinPriority || p > MaxPriority {
+		return fmt.Errorf("%w: %d", ErrBadPriority, p)
+	}
+	return nil
+}
 
 type Job struct {
 	ID        string
